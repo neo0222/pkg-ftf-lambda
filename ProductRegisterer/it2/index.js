@@ -128,6 +128,7 @@ async function updateProduct(tableName, payload) {
 async function calcCostRelatedToIngredient(recipe, info) {
   let cost = 0;
   const spentIngredientList = [];
+  const promises = []
   for (const ingredient of recipe) {
     // 食材データ取得
     const params = {
@@ -137,26 +138,16 @@ async function calcCostRelatedToIngredient(recipe, info) {
       }
     };
     console.log(params);
-    const result = await docClient.get(params).promise();
-    const obtainedIngredient = result.Item;
-    spentIngredientList.push({
-      obtainedIngredient: obtainedIngredient,
-      ingredient: ingredient
-    });
-    
-    // ingredient.active = trueの場合のみ原価を計上する
-    if (ingredient.is_active) {
-      const spentAmount = convertNum(ingredient.amount);
-      const measurePerPrepare = convertNum(result.Item.measure ? result.Item.measure.measure_per_prepare : undefined);
-      const pricePerPrepare = convertNum(result.Item.price_per_prepare);
-      const costPerIngredient = measurePerPrepare === 0 ? 0 : (pricePerPrepare * spentAmount) / measurePerPrepare;
-      console.log(`Ingredient ${ingredient.name} 's cost is ${costPerIngredient} yen.`);
-      cost = cost + costPerIngredient;
-      ingredient.cost = costPerIngredient.toString();
-    }
+    promises.push(obtainIngredientDataAndCalcCost(params, spentIngredientList, ingredient, cost))
   }
   // 関連材料の更新
   // 今回使わなくなった材料を抽出activate = falseに
+  try {
+    const result = await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
   const unspentIngredientList = await obtainNewlyUnspentIngredient(info.id, recipe);
   await updateRelatedProduct(unspentIngredientList, spentIngredientList, info.id, info.name);
 
@@ -164,6 +155,25 @@ async function calcCostRelatedToIngredient(recipe, info) {
   return  { costForIngredient: cost.toString(), newRecipeRelatedToIngredient: unspentIngredientList.concat(recipe) };
 }
 
+async function obtainIngredientDataAndCalcCost(params, spentIngredientList, ingredient, cost) {
+  const result = await docClient.get(params).promise();
+  const obtainedIngredient = result.Item;
+  spentIngredientList.push({
+    obtainedIngredient: obtainedIngredient,
+    ingredient: ingredient
+  });
+  
+  // ingredient.active = trueの場合のみ原価を計上する
+  if (ingredient.is_active) {
+    const spentAmount = convertNum(ingredient.amount);
+    const measurePerPrepare = convertNum(result.Item.measure ? result.Item.measure.measure_per_prepare : undefined);
+    const pricePerPrepare = convertNum(result.Item.price_per_prepare);
+    const costPerIngredient = measurePerPrepare === 0 ? 0 : (pricePerPrepare * spentAmount) / measurePerPrepare;
+    console.log(`Ingredient ${ingredient.name} 's cost is ${costPerIngredient} yen.`);
+    cost = cost + costPerIngredient;
+    ingredient.cost = costPerIngredient.toString();
+  }
+}
 /**
 * 材料更新により使われなくなった材料を以前のレシピから抽出する。
 * 
@@ -285,6 +295,7 @@ async function updateRelatedProduct(unspentIngredientList, spentIngredientList, 
 async function calcCostRelatedToBaseItem(recipe, info) {
   let cost = 0;
   const spentBaseItemList = [];
+  const promises = []
   for (const baseItem of recipe) {
     // 食材データ取得
     const params = {
@@ -293,23 +304,32 @@ async function calcCostRelatedToBaseItem(recipe, info) {
         'id': baseItem.id
       }
     };
-    const result = await docClient.get(params).promise();
-    const obtainedBaseItem = result.Item;
-    spentBaseItemList.push({
-      obtainedBaseItem: obtainedBaseItem,
-      baseItem: baseItem
-    });
+    promises.push((async () => {
+      const result = await docClient.get(params).promise();
+      const obtainedBaseItem = result.Item;
+      spentBaseItemList.push({
+        obtainedBaseItem: obtainedBaseItem,
+        baseItem: baseItem
+      });
+      
+      // baseItem.active = trueの場合のみ原価を計上する
+      if (baseItem.is_required) {
+        const spentAmount = convertNum(baseItem.amount);
+        const measurePerPrepare = convertNum(result.Item.measure ? result.Item.measure.measure_per_prepare : undefined);
+        const pricePerPrepare = convertNum(result.Item.price_per_prepare);
+        const costPerBaseItem = measurePerPrepare === 0 ? 0 : (pricePerPrepare * spentAmount) / measurePerPrepare;
+        console.log(`Base Item ${baseItem.name} 's cost is ${costPerBaseItem} yen.`);
+        cost = cost + costPerBaseItem;
+        baseItem.cost = costPerBaseItem.toString();
+      }
+    })())
     
-    // baseItem.active = trueの場合のみ原価を計上する
-    if (baseItem.is_required) {
-      const spentAmount = convertNum(baseItem.amount);
-      const measurePerPrepare = convertNum(result.Item.measure ? result.Item.measure.measure_per_prepare : undefined);
-      const pricePerPrepare = convertNum(result.Item.price_per_prepare);
-      const costPerBaseItem = measurePerPrepare === 0 ? 0 : (pricePerPrepare * spentAmount) / measurePerPrepare;
-      console.log(`Base Item ${baseItem.name} 's cost is ${costPerBaseItem} yen.`);
-      cost = cost + costPerBaseItem;
-      baseItem.cost = costPerBaseItem.toString();
-    }
+  }
+  try {
+    await Promise.all(promises)
+  }
+  catch (error) {
+    throw error;
   }
   // 関連材料の更新
   // 今回使わなくなった材料を抽出activate = falseに
