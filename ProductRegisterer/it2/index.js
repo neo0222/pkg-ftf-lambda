@@ -379,9 +379,10 @@ async function obtainNewlyUnspentBaseItem(productId, newRecipe) {
     return [];
   }
   const prevRecipe = result.Item.required_base_item_list;
-  // レシピの材料のうちoldにあってnewにないものだけ集める
+  // レシピの材料のうち前はactiveだったが今回でnot requiredになったものを集める
   const unspentBaseItemList = 
     prevRecipe.filter(oldBaseItem => {
+      return oldBaseItem.is_active && newRecipe.some(newBaseItem => newBaseItem.id === oldBaseItem.id && !newBaseItem.is_required);
     }
   );
   unspentBaseItemList.forEach(baseItem => {
