@@ -9,6 +9,7 @@ const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
+const baseItemTableName = 'BASE_ITEM_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
@@ -110,7 +111,7 @@ async function putMaterial(tableName, item) {
 */
 async function updateMaterial(tableName, item) {
   // 更新対象の食材を用いる材料およびその材料を用いる商品の原価を連鎖的に更新する。
-  await updateRelatedIngredientAndProductForCost(item);
+  await asyncUpdateRelatedIngredientAndProductForCost(item);
   const itemToBeUpdated = {
     id: item.id,
     wholesaler_id: optional(item.wholesaler_id),
@@ -164,29 +165,127 @@ async function updateMaterial(tableName, item) {
 */
 async function updateRelatedIngredientAndProductForCost(item) {
   let ingredientToBeUpdatedInfoList = [];
-  let productToBeUpdatedInfoList = [];
-  const newProductInfoList = [];
+  let updatedIngredientList = [];
+  const baseItemToBeUpdatedWithIngredientInfoList = []
+  const baseItemToBeUpedatedWithMaterialInfoList = [];
+  const productToBeUpdatedWithIngredientInfoList = [];
+  const productToBeUpdatedWithBaseItemInfoList = []
+  const updatedBaseItemInfoList = []
+
+  // ##### 1.食材　→　材料 ############################################
+
   // price_per_order, measure_per_prepareの変更を関連材料のレシピのcostに反映させる
-  await updateRelatedIngredientCost(item, ingredientToBeUpdatedInfoList);
+  await calcIngredientCostByNewMaterialCost(item, ingredientToBeUpdatedInfoList);
   // 材料のレシピの変更をprice_per_prepareに反映させる
-  await updatePricePerPrepare(ingredientToBeUpdatedInfoList, productToBeUpdatedInfoList);
+  await updateIngredientWithMaterialCost(ingredientToBeUpdatedInfoList, updatedIngredientList);
+
+  // ##### 2.食材　→　商品ベース #######################################
+
+  // price_per_order, measure_per_prepareの変更を関連商品ベースのレシピのcostに反映させる
+  await calcBaseItemCostByNewMaterialCost(item, baseItemToBeUpedatedWithMaterialInfoList);
+  // 商品ベースのレシピの変更をprice_per_prepareに反映させる
+  await updateBaseItemWithMaterialCost(baseItemToBeUpedatedWithMaterialInfoList, updatedBaseItemInfoList);
+
+  // ##### 3. 材料　→　商品ベース ######################################
+
   // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcProductCostByNewIngredientCost(productToBeUpdatedInfoList, newProductInfoList);
+  await calcBaseItemCostByNewIngredientCost(updatedIngredientList, baseItemToBeUpdatedWithIngredientInfoList);
   // 商品のレシピの変更を商品の原価に反映させる
-  await updateProductCost(newProductInfoList);
+  await updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredientInfoList, updatedBaseItemInfoList);
+
+  // ##### 4. 材料　→　商品 ###########################################
+
+  // price_per_prepareの変更を関連商品のレシピのcostに反映させる
+  await calcProductCostByNewIngredientCost(updatedIngredientList, productToBeUpdatedWithIngredientInfoList);
+  // 商品のレシピの変更を商品の原価に反映させる
+  await updateProductCost(productToBeUpdatedWithIngredientInfoList);
+
+  // ##### 5. 商品ベース　→　商品 ###########################################
+
+  // price_per_prepareの変更を関連商品のレシピのcostに反映させる
+  await calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList);
+  // 商品のレシピの変更を商品の原価に反映させる
+  await updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfoList);
 }
 
 /**
-* 材料の原価が変更された際に、その材料に関連する原価変更などの処理を行う。
+* 更新対象の食材を用いる材料およびその材料を用いる商品の原価を連鎖的かつ非同期に更新する。
 * 
-* @param productToBeUpdatedInfoList 何らかの材料の情報が更新された商品に関する情報
+* @param tableName テーブル名
+* @param item 登録する食材情報
 */
-async function updateRelatedProductForCost(productToBeUpdatedInfoList) {
-  const newProductInfoList = [];
+async function asyncUpdateRelatedIngredientAndProductForCost(item) {
+  let ingredientToBeUpdatedInfoList = [];
+  let updatedIngredientList = [];
+  const baseItemToBeUpdatedWithIngredientInfoList = []
+  const baseItemToBeUpedatedWithMaterialInfoList = [];
+  const productToBeUpdatedWithIngredientInfoList = [];
+  const productToBeUpdatedWithBaseItemInfoList = []
+  const updatedBaseItemInfoList = []
+
+  const promises = []
+
+  promises.push((async () => {
+    // ##### 1.食材　→　材料 ############################################
+
+    // price_per_order, measure_per_prepareの変更を関連材料のレシピのcostに反映させる
+    await calcIngredientCostByNewMaterialCost(item, ingredientToBeUpdatedInfoList);
+    // 材料のレシピの変更をprice_per_prepareに反映させる
+    await updateIngredientWithMaterialCost(ingredientToBeUpdatedInfoList, updatedIngredientList);
+
+  })())
+
+  promises.push((async () => {
+    // ##### 2.食材　→　商品ベース #######################################
+
+    // price_per_order, measure_per_prepareの変更を関連商品ベースのレシピのcostに反映させる
+    await calcBaseItemCostByNewMaterialCost(item, baseItemToBeUpedatedWithMaterialInfoList);
+    // 商品ベースのレシピの変更をprice_per_prepareに反映させる
+    await updateBaseItemWithMaterialCost(baseItemToBeUpedatedWithMaterialInfoList, updatedBaseItemInfoList);
+  })())
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error
+  }
+
+  promises.length = 0
+
+  promises.push((async () => {
+    // ##### 3. 材料　→　商品ベース ######################################
+
+    // price_per_prepareの変更を関連商品のレシピのcostに反映させる
+    await calcBaseItemCostByNewIngredientCost(updatedIngredientList, baseItemToBeUpdatedWithIngredientInfoList);
+    // 商品のレシピの変更を商品の原価に反映させる
+    await updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredientInfoList, updatedBaseItemInfoList);
+
+  })())
+
+  promises.push((async () => {
+    // ##### 4. 材料　→　商品 ###########################################
+
+    // price_per_prepareの変更を関連商品のレシピのcostに反映させる
+    await calcProductCostByNewIngredientCost(updatedIngredientList, productToBeUpdatedWithIngredientInfoList);
+    // 商品のレシピの変更を商品の原価に反映させる
+    await updateProductCost(productToBeUpdatedWithIngredientInfoList);
+
+  })())
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error
+  }
+  
+  // ##### 5. 商品ベース　→　商品 ###########################################
+
   // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcProductCostByNewIngredientCost(productToBeUpdatedInfoList, newProductInfoList);
+  await calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList);
   // 商品のレシピの変更を商品の原価に反映させる
-  await updateProductCost(newProductInfoList);
+  await updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfoList);
 }
 
 /**
@@ -195,7 +294,7 @@ async function updateRelatedProductForCost(productToBeUpdatedInfoList) {
 * @param item 更新される食材に関する情報
 * @param ingredientToBeUpdatedInfoList 更新される食材を用いる材料を格納していく配列。
 */
-async function updateRelatedIngredientCost(item, ingredientToBeUpdatedInfoList) {
+async function calcIngredientCostByNewMaterialCost(item, ingredientToBeUpdatedInfoList) {
   const params = {
     TableName: materialTableName,
     Key: {
@@ -212,17 +311,75 @@ async function updateRelatedIngredientCost(item, ingredientToBeUpdatedInfoList) 
     console.log('no material info related cost changed.');
     return;
   }
+
+  const promises = [
+
+  ]
   for (const ingredient of relatedIngredientList) {
+    promises.push((async () => {
+      const params = {
+        TableName: ingredientTableName,
+        Key: {
+          'id': ingredient.id
+        }
+      };
+      const result = await docClient.get(params).promise();
+      const obtainedIngredient = result.Item;
+      
+      obtainedIngredient.required_material_list.forEach(material => {
+        if (material.id === item.id) {
+          // 食材のコストを更新
+          if (convertNum(item.measure_per_order) === 0) {
+            material.cost = 0;
+          } else {
+            material.cost = (convertNum(item.price_per_order) * convertNum(material.amount) / convertNum(item.measure_per_order)).toString();
+          }
+        }
+      });
+      obtainedIngredient.price_per_prepare = obtainedIngredient.required_material_list.filter(material => material.is_active).map(material => material.cost).reduce((acc, cur) => {
+         return convertNum(acc) + convertNum(cur);
+      }, 0).toString();
+      ingredientToBeUpdatedInfoList.push(obtainedIngredient);
+    })())
+  }
+  try {
+    await Promise.all(promises)
+  }
+  catch(error) {
+    throw error;
+  }
+  console.log(`summary: ingredient to be updated : ${JSON.stringify(ingredientToBeUpdatedInfoList.map(ing => ing.id))}`);
+}
+
+async function calcBaseItemCostByNewMaterialCost(item, baseItemToBeUpedatedWithMaterialInfoList) {
+  const params = {
+    TableName: materialTableName,
+    Key: {
+      'id': item.id
+    }
+  };
+  const result = await docClient.get(params).promise();
+  const obtainedMaterial = result.Item;
+  const relatedBaseItemList = obtainedMaterial.related_base_item_list;
+  const pricePerOrder = obtainedMaterial.price_per_order;
+  const measurePerOrder = obtainedMaterial.measure.measure_per_order;
+  if (pricePerOrder === item.price_per_order && measurePerOrder === item.measure_per_order) {
+    // コストに関わる変更がなければ処理を抜ける
+    console.log('no material info related cost changed.');
+    return;
+  }
+
+  for (const baseItem of relatedBaseItemList) {
     const params = {
-      TableName: ingredientTableName,
+      TableName: baseItemTableName,
       Key: {
-        'id': ingredient.id
+        'id': baseItem.id
       }
     };
     const result = await docClient.get(params).promise();
-    const obtainedIngredient = result.Item;
-    
-    obtainedIngredient.required_material_list.forEach(material => {
+    const obtainedBaseItem = result.Item;
+
+    for (const material of obtainedBaseItem.required_material_list) {
       if (material.id === item.id) {
         // 食材のコストを更新
         if (convertNum(item.measure_per_order) === 0) {
@@ -231,13 +388,31 @@ async function updateRelatedIngredientCost(item, ingredientToBeUpdatedInfoList) 
           material.cost = (convertNum(item.price_per_order) * convertNum(material.amount) / convertNum(item.measure_per_order)).toString();
         }
       }
-    });
-    obtainedIngredient.price_per_prepare = obtainedIngredient.required_material_list.filter(material => material.is_active).map(material => material.cost).reduce((acc, cur) => {
-       return convertNum(acc) + convertNum(cur);
-    }).toString();
-    ingredientToBeUpdatedInfoList.push(obtainedIngredient);
+    };
+
+    obtainedBaseItem.price_per_prepare = 
+      (
+        convertNum(
+          obtainedBaseItem.required_material_list
+            .filter(material => material.is_active)
+            .map(material => material.cost)
+            .reduce((acc, cur) => {
+              return convertNum(acc) + convertNum(cur);
+            }, 0) 
+        )
+        +
+        convertNum(
+          obtainedBaseItem.required_ingredient_list
+            .filter(ingredient => ingredient.is_active)
+            .map(ingredient => ingredient.cost)
+            .reduce((acc, cur) => {
+              return convertNum(acc) + convertNum(cur);
+            }, 0)
+        )
+      ).toString();
+    baseItemToBeUpedatedWithMaterialInfoList.push(obtainedBaseItem);
   }
-  console.log(`summary: ingredient to be updated : ${JSON.stringify(ingredientToBeUpdatedInfoList)}`);
+  console.log(`summary: base items to be updated : ${JSON.stringify(baseItemToBeUpedatedWithMaterialInfoList.map(baseItem => baseItem.id))}`);
 }
 
 /**
@@ -246,34 +421,181 @@ async function updateRelatedIngredientCost(item, ingredientToBeUpdatedInfoList) 
 * @param ingredientToBeUpdatedInfoList
 * @param productToBeUpdatedInfoLit
 */
-async function updatePricePerPrepare(ingredientToBeUpdatedInfoList, productToBeUpdatedInfoList) {
+async function updateIngredientWithMaterialCost(ingredientToBeUpdatedInfoList, updatedIngredientList) {
+  const promises = []
   for (const item of ingredientToBeUpdatedInfoList) {
-    const params = {
-      TableName: ingredientTableName,
-      Item: item
-    };
-    await docClient.put(params).promise();
-    productToBeUpdatedInfoList.push({
-      ingredientId: item.id,
-      pricePerPrepare: item.price_per_prepare,
-      measurePerPrepare: item.measure.measure_per_prepare,
-      relatedProductIdList: item.related_product_list.map(productInfo => productInfo.id)
-    });
+    promises.push((async () => {
+      const params = {
+        TableName: ingredientTableName,
+        Item: item
+      };
+      await docClient.put(params).promise();
+      updatedIngredientList.push({
+        ingredientId: item.id,
+        pricePerPrepare: item.price_per_prepare,
+        measurePerPrepare: item.measure.measure_per_prepare,
+        relatedProductIdList: item.related_product_list.map(productInfo => productInfo.id),
+        relatedBaseItemIdList: item.related_base_item_list.map(baseItemInfo => baseItemInfo.id)
+      });
+    })())    
   }
-  console.log(`updated ingredient: ${JSON.stringify(productToBeUpdatedInfoList)}`);
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  console.log(`updated ingredient: ${JSON.stringify(updatedIngredientList)}`);
+}
+
+/**
+* 食材の情報が更新された際にその食材を用いる商品ベースの原価情報を更新する
+* 
+* @param baseItemToBeUpedatedWithMaterialInfoList
+* @param productToBeUpdatedInfoLit
+*/
+async function updateBaseItemWithMaterialCost(baseItemToBeUpedatedWithMaterialInfoList, updatedBaseItemInfoList) {
+  const promises = []
+  for (const item of baseItemToBeUpedatedWithMaterialInfoList) {
+    promises.push((async () => {
+      const params = {
+        TableName: baseItemTableName,
+        Item: item
+      };
+      await docClient.put(params).promise();
+      updatedBaseItemInfoList.push({
+        baseItemId: item.id,
+        pricePerPrepare: item.price_per_prepare,
+        measurePerPrepare: item.measure.measure_per_prepare,
+        relatedProductIdList: item.related_product_list.map(productInfo => productInfo.id)
+      });
+    })())
+  }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  console.log(`updated base items: ${JSON.stringify(updatedBaseItemInfoList)}`);
+}
+
+/**
+* 材料の原価更新時に、その材料を用いる商品ベースの更新後の原価を算出する。
+* 
+* @param BaseItemToBeUpdatedInfoList 何らかの材料の情報が更新された商品ベースに関する情報
+* @param baseItemToBeUpdatedWithIngredientInfoList 更新情報に基づいて原価を再計算した商品ベースの情報からなる配列
+*/
+async function calcBaseItemCostByNewIngredientCost(updatedIngredientList, baseItemToBeUpdatedWithIngredientInfoList) {
+  const obtainedBaseItemList = [];
+  // ほんとはここは非同期で処理したい。。。
+  const promises = [];
+  for (const info of updatedIngredientList) {
+    for (const baseItemId of info.relatedBaseItemIdList) {
+      promises.push((async () => {
+        const params = {
+          TableName: baseItemTableName,
+          Key: {
+            'id': baseItemId
+          }
+        };
+        const result = await docClient.get(params).promise();
+        obtainedBaseItemList.push(result.Item);
+      })())
+    }
+  }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  const obtainedBaseItemListWithNoDuplication = Array.from(new Set(obtainedBaseItemList));
+  
+  for (const info of updatedIngredientList) {
+    console.log(`START update base item related to ingredient: ${info.ingredientId}`);
+    const ingredientId = info.ingredientId;
+    const pricePerPrepare = info.pricePerPrepare;
+    const measurePerPrepare = info.measurePerPrepare;
+    const promises = []
+    for (const baseItem of obtainedBaseItemListWithNoDuplication) {
+      promises.push((async () => {
+        for (const ingredient of baseItem.required_ingredient_list) {
+          if (ingredient.id === ingredientId) {
+            // 材料のコストを更新
+            if (convertNum(measurePerPrepare) === 0) {
+              ingredient.cost = 0;
+            } else {
+              ingredient.cost = (convertNum(pricePerPrepare) * convertNum(ingredient.amount) / convertNum(measurePerPrepare)).toString();
+            }
+          }
+        };
+        baseItem.price_per_prepare = 
+          (
+            convertNum(
+              baseItem.required_ingredient_list
+                .filter(ingredient => ingredient.is_active)
+                .map(ingredient => ingredient.cost)
+                .reduce((acc, cur) => {
+                  return convertNum(acc) + convertNum(cur);
+              }, 0)
+            )
+            +
+            convertNum(
+              baseItem.required_material_list
+                .filter(material => material.is_active)
+                .map(material => material.cost)
+                .reduce((acc, cur) => {
+                  return convertNum(acc) + convertNum(cur);
+              }, 0)
+            )
+          
+          ).toString();
+      })())
+    }
+
+    try {
+      await Promise.all(promises);
+    }
+    catch (error) {
+      throw error;
+    }
+
+  }
+  for (const newBaseItemInfo of obtainedBaseItemListWithNoDuplication) {
+    baseItemToBeUpdatedWithIngredientInfoList.push(newBaseItemInfo);
+  }
+  console.log(`summary: base items to be updated are ${JSON.stringify(baseItemToBeUpdatedWithIngredientInfoList.map(base => base.id))}`);
 }
 
 /**
 * 材料の原価更新時に、その材料を用いる商品の更新後の原価を算出する。
 * 
-* @param productToBeUpdatedInfoList 何らかの材料の情報が更新された商品に関する情報
-* @param newProductInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
+* @param updatedIngredientList 何らかの材料の情報が更新された商品に関する情報
+* @param productToBeUpdatedWithIngredientInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
 */
-async function calcProductCostByNewIngredientCost(productToBeUpdatedInfoList, newProductInfoList) {
+async function calcProductCostByNewIngredientCost(updatedIngredientList, productToBeUpdatedWithIngredientInfoList) {
   const obtainedProductList = [];
   // ほんとはここは非同期で処理したい。。。
-  for (const info of productToBeUpdatedInfoList) {
+  const promises = []
+  const productIdListWithNoDuplication = [];
+  const isAlreadyObtained = (id) => productIdListWithNoDuplication.includes(id);
+
+  for (const info of updatedIngredientList) {
     for (const productId of info.relatedProductIdList) {
+      if (isAlreadyObtained(productId)) continue;
+      productIdListWithNoDuplication.push(productId);
+    }
+  }
+
+  for (const productId of productIdListWithNoDuplication) {
+    promises.push((async () => {
       const params = {
         TableName: productTableName,
         Key: {
@@ -281,56 +603,238 @@ async function calcProductCostByNewIngredientCost(productToBeUpdatedInfoList, ne
         }
       };
       const result = await docClient.get(params).promise();
-      console.log(result.Item);
       obtainedProductList.push(result.Item);
-    }
+    })());
   }
-  const obtainedProductListWithNoDuplication = Array.from(new Set(obtainedProductList));
-  console.log(JSON.stringify(obtainedProductListWithNoDuplication));
+
   
-  for (const info of productToBeUpdatedInfoList) {
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  const obtainedProductListWithNoDuplication = Array.from(new Set(obtainedProductList));
+
+  console.log(`summary: products to be updated is ${JSON.stringify(obtainedProductListWithNoDuplication.map(product => product.id))}`);
+
+  for (const info of updatedIngredientList) {
     console.log(`START update product related to ingredient: ${info.ingredientId}`);
     const ingredientId = info.ingredientId;
     const pricePerPrepare = info.pricePerPrepare;
     const measurePerPrepare = info.measurePerPrepare;
     for (const product of obtainedProductListWithNoDuplication) {
-      product.required_ingredient_list.forEach(ingredient => {
+      for (const ingredient of product.required_ingredient_list) {
         if (ingredient.id === ingredientId) {
           // 材料のコストを更新
-          console.log(pricePerPrepare, ingredient.amount, measurePerPrepare);
           if (convertNum(measurePerPrepare) === 0) {
             ingredient.cost = 0;
           } else {
             ingredient.cost = (convertNum(pricePerPrepare) * convertNum(ingredient.amount) / convertNum(measurePerPrepare)).toString();
           }
         }
-      });
-      product.cost = product.required_ingredient_list.filter(ingredient => ingredient.is_active).map(ingredient => ingredient.cost).reduce((acc, cur) => {
-        return convertNum(acc) + convertNum(cur);
-      }).toString();
-      console.log(`calculated new cost of product: ${JSON.stringify(product)}`);
+      };
+      product.cost =
+        (
+          convertNum(
+            product.required_ingredient_list
+              .filter(ingredient => ingredient.is_active)
+              .map(ingredient => ingredient.cost)
+              .reduce((acc, cur) => {
+                return convertNum(acc) + convertNum(cur);
+              }, 0)
+          )
+          +
+          convertNum(
+            product.required_base_item_list
+              .filter(baseItem => baseItem.is_active)
+              .map(baseItem => baseItem.cost)
+              .reduce((acc, cur) => {
+                return convertNum(acc) + convertNum(cur);
+            }, 0)
+          )
+        ).toString();
     }
   }
   for (const newProductInfo of obtainedProductListWithNoDuplication) {
-    newProductInfoList.push(newProductInfo);
+    productToBeUpdatedWithIngredientInfoList.push(newProductInfo);
   }
+  console.log(`summary: products to be updated with ingredints are ${JSON.stringify(productToBeUpdatedWithIngredientInfoList.map(prod => prod.id))}`);
+}
+
+/**
+* 材料の原価更新時に、その材料を用いる商品の更新後の原価を算出する。
+* 
+* @param updatedBaseItemInfoList 何らかの材料の情報が更新された商品に関する情報
+* @param productToBeUpdatedWithBaseItemInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
+*/
+async function calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList) {
+  const obtainedProductList = [];
+  const promises = [];
+  const productIdListWithNoDuplication = [];
+  const isAlreadyObtained = (id) => productIdListWithNoDuplication.includes(id);
+
+  for (const info of updatedBaseItemInfoList) {
+    for (const productId of info.relatedProductIdList) {
+      if (isAlreadyObtained(productId)) continue;
+      productIdListWithNoDuplication.push(productId);
+    }
+  }
+
+  // ほんとはここは非同期で処理したい。。。
+  for (const productId of productIdListWithNoDuplication) {
+    promises.push((async () => {
+      const params = {
+        TableName: productTableName,
+        Key: {
+          'id': productId
+        }
+      };
+      const result = await docClient.get(params).promise();
+      obtainedProductList.push(result.Item);
+    })());
+  }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  const obtainedProductListWithNoDuplication = Array.from(new Set(obtainedProductList));
+
+  console.log(`summary: products to be updated with base items is ${JSON.stringify(obtainedProductListWithNoDuplication.map(product => product.id))}`);
+
+  for (const info of updatedBaseItemInfoList) {
+    console.log(`START update product related to base item: ${info.baseItemId}`);
+    const baseItemId = info.baseItemId;
+    const pricePerPrepare = info.pricePerPrepare;
+    const measurePerPrepare = info.measurePerPrepare;
+    for (const product of obtainedProductListWithNoDuplication) {
+      product.required_base_item_list.forEach(baseItem => {
+        if (baseItem.id === baseItemId) {
+          // 商品ベースのコストを更新
+          if (convertNum(measurePerPrepare) === 0) {
+            baseItem.cost = 0;
+          } else {
+            baseItem.cost = (convertNum(pricePerPrepare) * convertNum(baseItem.amount) / convertNum(measurePerPrepare)).toString();
+          }
+        }
+      });
+      product.cost = 
+        (
+          convertNum(
+            product.required_base_item_list
+            .filter(baseItem => baseItem.is_active)
+            .map(baseItem => baseItem.cost)
+            .reduce((acc, cur) => {
+              return convertNum(acc) + convertNum(cur);
+            }, 0)
+          )
+          +
+          convertNum(
+            product.required_ingredient_list
+            .filter(ingredient => ingredient.is_active)
+            .map(ingredient => ingredient.cost)
+            .reduce((acc, cur) => {
+              return convertNum(acc) + convertNum(cur);
+            }, 0)
+          )
+        ).toString();
+    }
+  }
+  for (const newProductInfo of obtainedProductListWithNoDuplication) {
+    productToBeUpdatedWithBaseItemInfoList.push(newProductInfo);
+  }
+  console.log(`summary: products to be updated are ${JSON.stringify(productToBeUpdatedWithBaseItemInfoList.map(prod => prod.id))}`);
 }
 
 /**
 * 新たに算出した商品原価情報に基づいて、商品の原価を更新する。
 * 
-* @param newProductInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
+* @param productToBeUpdatedWithIngredientInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
 */
-async function updateProductCost(newProductInfoList) {
-  console.log(JSON.stringify((newProductInfoList)));
-  for (const item of newProductInfoList) {
-    const params = {
-      TableName: productTableName,
-      Item: item
-    };
-    await docClient.put(params).promise();
+async function updateProductCost(productToBeUpdatedWithIngredientInfoList) {
+  const promises = []
+  for (const item of productToBeUpdatedWithIngredientInfoList) {
+    promises.push((async () => {
+      const params = {
+        TableName: productTableName,
+        Item: item
+      };
+      await docClient.put(params).promise();
+    })());
   }
-  console.log(`updated products: ${JSON.stringify(newProductInfoList)}`);
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  console.log(`updated products: ${JSON.stringify(productToBeUpdatedWithIngredientInfoList)}`);
+}
+
+/**
+* 新たに算出した商品原価情報に基づいて、商品の原価を更新する。
+* 
+* @param productToBeUpdatedWithBaseItemInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
+*/
+async function updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfoList) {
+  const promises = [];
+  for (const item of productToBeUpdatedWithBaseItemInfoList) {
+    promises.push((async () => {
+      const params = {
+        TableName: productTableName,
+        Item: item
+      };
+      await docClient.put(params).promise();
+    })())
+  }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error
+  }
+  console.log(`updated products: ${JSON.stringify(productToBeUpdatedWithBaseItemInfoList)}`);
+}
+
+/**
+* 新たに算出した商品ベース原価情報に基づいて、商品ベースの原価を更新する。
+* 
+* @param baseItemToBeUpdatedWithIngredientInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
+*/
+async function updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredientInfoList, updatedBaseItemInfoList) {
+  const promises = [];
+  for (const item of baseItemToBeUpdatedWithIngredientInfoList) {
+    promises.push((async () => {
+      const params = {
+        TableName: baseItemTableName,
+        Item: item
+      };
+      await docClient.put(params).promise();
+      updatedBaseItemInfoList.push({
+        baseItemId: item.id,
+        pricePerPrepare: item.price_per_prepare,
+        measurePerPrepare: item.measure.measure_per_prepare,
+        relatedProductIdList: item.related_product_list.map(productInfo => productInfo.id)
+      });
+    })());
+  }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
+  console.log(`updated base items: ${JSON.stringify(baseItemToBeUpdatedWithIngredientInfoList)}`);
 }
 
 async function findNextSequence(targetTableName) {
