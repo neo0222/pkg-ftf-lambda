@@ -158,57 +158,6 @@ async function updateMaterial(tableName, item) {
 }
 
 /**
-* 更新対象の食材を用いる材料およびその材料を用いる商品の原価を連鎖的に更新する。
-* 
-* @param tableName テーブル名
-* @param item 登録する食材情報
-*/
-async function updateRelatedIngredientAndProductForCost(item) {
-  let ingredientToBeUpdatedInfoList = [];
-  let updatedIngredientList = [];
-  const baseItemToBeUpdatedWithIngredientInfoList = []
-  const baseItemToBeUpedatedWithMaterialInfoList = [];
-  const productToBeUpdatedWithIngredientInfoList = [];
-  const productToBeUpdatedWithBaseItemInfoList = []
-  const updatedBaseItemInfoList = []
-
-  // ##### 1.食材　→　材料 ############################################
-
-  // price_per_order, measure_per_prepareの変更を関連材料のレシピのcostに反映させる
-  await calcIngredientCostByNewMaterialCost(item, ingredientToBeUpdatedInfoList);
-  // 材料のレシピの変更をprice_per_prepareに反映させる
-  await updateIngredientWithMaterialCost(ingredientToBeUpdatedInfoList, updatedIngredientList);
-
-  // ##### 2.食材　→　商品ベース #######################################
-
-  // price_per_order, measure_per_prepareの変更を関連商品ベースのレシピのcostに反映させる
-  await calcBaseItemCostByNewMaterialCost(item, baseItemToBeUpedatedWithMaterialInfoList);
-  // 商品ベースのレシピの変更をprice_per_prepareに反映させる
-  await updateBaseItemWithMaterialCost(baseItemToBeUpedatedWithMaterialInfoList, updatedBaseItemInfoList);
-
-  // ##### 3. 材料　→　商品ベース ######################################
-
-  // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcBaseItemCostByNewIngredientCost(updatedIngredientList, baseItemToBeUpdatedWithIngredientInfoList);
-  // 商品のレシピの変更を商品の原価に反映させる
-  await updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredientInfoList, updatedBaseItemInfoList);
-
-  // ##### 4. 材料　→　商品 ###########################################
-
-  // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcProductCostByNewIngredientCost(updatedIngredientList, productToBeUpdatedWithIngredientInfoList);
-  // 商品のレシピの変更を商品の原価に反映させる
-  await updateProductCost(productToBeUpdatedWithIngredientInfoList);
-
-  // ##### 5. 商品ベース　→　商品 ###########################################
-
-  // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList);
-  // 商品のレシピの変更を商品の原価に反映させる
-  await updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfoList);
-}
-
-/**
 * 更新対象の食材を用いる材料およびその材料を用いる商品の原価を連鎖的かつ非同期に更新する。
 * 
 * @param tableName テーブル名
