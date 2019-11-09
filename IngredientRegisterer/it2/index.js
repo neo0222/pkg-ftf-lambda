@@ -282,7 +282,7 @@ async function updateIngredient(tableName, payload) {
         proper_amount: optional(info.proper_amount),
         proper_amount_unit: optional(info.proper_amount_unit)
       },
-      related_product_list: [],
+      related_product_list: info.related_product_list,
       related_base_item_list: info.related_base_item_list,
       related_material: info.related_material,
       is_active: true,
