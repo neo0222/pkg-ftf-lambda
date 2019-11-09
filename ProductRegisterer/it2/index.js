@@ -143,7 +143,10 @@ async function calcCostRelatedToIngredient(recipe, info) {
   // 関連材料の更新
   // 今回使わなくなった材料を抽出activate = falseに
   try {
-    const result = await Promise.all(promises);
+    const costList = await Promise.all(promises);
+    cost = costList.reduce((acc, cur) => {
+      return acc + cur;
+    }, 0);
   }
   catch (error) {
     throw error;
@@ -173,6 +176,7 @@ async function obtainIngredientDataAndCalcCost(params, spentIngredientList, ingr
     cost = cost + costPerIngredient;
     ingredient.cost = costPerIngredient.toString();
   }
+  return new Promise((resolve) => resolve(cost))
 }
 /**
 * 材料更新により使われなくなった材料を以前のレシピから抽出する。
