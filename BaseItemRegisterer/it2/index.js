@@ -203,7 +203,7 @@ async function calcCostForProduct(recipe, info) {
   let cost = 0;
   const spentIngredientList = [];
   for (const ingredient of recipe) {
-    // 食材データ取得
+    // 材料データ取得
     const params = {
       TableName: ingredientTableName,
       Key: {

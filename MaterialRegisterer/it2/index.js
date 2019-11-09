@@ -82,6 +82,7 @@ async function putMaterial(tableName, item) {
       proper_amount_unit: optional(item.proper_amount_unit)
     },
     related_ingredient_list: [],
+    related_base_item_list: [],
     is_active: true,
     is_deleted: false
   };
@@ -135,7 +136,8 @@ async function updateMaterial(tableName, item) {
       proper_amount: optional(item.proper_amount),
       proper_amount_unit: optional(item.proper_amount_unit)
     },
-    related_ingredient_list: item.related_ingredient_list
+    related_ingredient_list: item.related_ingredient_list,
+    related_base_item_list: item.related_base_item_list
   };
   
   const params = {
