@@ -378,7 +378,6 @@ async function obtainNewlyUnspentBaseItem(productId, newRecipe) {
   // レシピの材料のうちoldにあってnewにないものだけ集める
   const unspentBaseItemList = 
     prevRecipe.filter(oldBaseItem => {
-      return oldBaseItem.is_active && !oldBaseItem.is_required;
     }
   );
   unspentBaseItemList.forEach(baseItem => {
