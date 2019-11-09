@@ -814,32 +814,46 @@ async function updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfo
 async function calcCostForIngredient(recipe, info) {
   let cost = 0;
   const spentMaterialList = [];
+  const promises = [];
   for (const material of recipe) {
-    // 食材データ取得
-    const params = {
-      TableName: materialTableName,
-      Key: {
-        'id': material.id
+    promises.push((async () => {
+      // 食材データ取得
+      const params = {
+        TableName: materialTableName,
+        Key: {
+          'id': material.id
+        }
+      };
+      console.log(params);
+      const result = await docClient.get(params).promise();
+      const obtainedMaterial = result.Item;
+      spentMaterialList.push({
+        obtainedMaterial: obtainedMaterial,
+        material: material
+      });
+      
+      let costPerMaterial;
+
+      // material.active = trueの場合のみ原価を計上する
+      if (material.is_active) {
+        const spentAmount = convertNum(material.amount);
+        const measurePerOrder = convertNum(result.Item.measure ? result.Item.measure.measure_per_order : undefined);
+        const pricePerOrder = convertNum(result.Item.price_per_order);
+        costPerMaterial = measurePerOrder === 0 ? 0 : (pricePerOrder * spentAmount) / measurePerOrder;
+        material.cost = costPerMaterial.toString();
       }
-    };
-    console.log(params);
-    const result = await docClient.get(params).promise();
-    const obtainedMaterial = result.Item;
-    spentMaterialList.push({
-      obtainedMaterial: obtainedMaterial,
-      material: material
-    });
-    
-    // material.active = trueの場合のみ原価を計上する
-    if (material.is_active) {
-      const spentAmount = convertNum(material.amount);
-      const measurePerOrder = convertNum(result.Item.measure ? result.Item.measure.measure_per_order : undefined);
-      const pricePerOrder = convertNum(result.Item.price_per_order);
-      const costPerMaterial = measurePerOrder === 0 ? 0 : (pricePerOrder * spentAmount) / measurePerOrder;
-      cost = cost + costPerMaterial;
-      material.cost = costPerMaterial.toString();
-    }
+      return new Promise((resolve) => resolve(costPerMaterial))
+    })())
   }
+
+  try {
+    const materialCostList = await Promise.all(promises);
+    cost = materialCostList.reduce((acc, cur) => { return acc + cur}).toString();
+  }
+  catch (error) {
+    throw error;
+  }
+
   // 関連食材の更新
   // 今回使わなくなった食材を抽出activate = falseに
   const unspentMaterialList = await obtainUnspentMaterial(info.id, recipe);
@@ -886,28 +900,39 @@ async function obtainUnspentMaterial(ingredientId, newRecipe) {
 async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, ingredientId, preparationType, ingredientName) {
   const relatedIngredientListToBeUpdateList = [];
   // unspentの処理
+  const promises = [];
   for (const unspentMaterial of unspentMaterialList) {
-    // レシピから取得したMaterialのデータを元に、DBから食材データを取得
-    const params = {
-      TableName: materialTableName,
-      Key: {
-        'id': unspentMaterial.id
-      }
-    };
-    console.log(params);
-    const result = await docClient.get(params).promise();
-    const prevRelatedIngredientList = result.Item.related_ingredient_list;
-    // active = falseに（1種類の食材に対してactiveなものが1つしかないという前提で）
-    prevRelatedIngredientList.forEach(ingredient => {
-      if (ingredient.id === ingredientId && ingredient.is_active) {
-        ingredient.is_active = false;
-      }
-    });
-    relatedIngredientListToBeUpdateList.push({
-      materialId: unspentMaterial.id,
-      newRelatedIngredientList: prevRelatedIngredientList
-    });
+    promises.push((async () => {
+      // レシピから取得したMaterialのデータを元に、DBから食材データを取得
+      const params = {
+        TableName: materialTableName,
+        Key: {
+          'id': unspentMaterial.id
+        }
+      };
+      console.log(params);
+      const result = await docClient.get(params).promise();
+      const prevRelatedIngredientList = result.Item.related_ingredient_list;
+      // active = falseに（1種類の食材に対してactiveなものが1つしかないという前提で）
+      prevRelatedIngredientList.forEach(ingredient => {
+        if (ingredient.id === ingredientId && ingredient.is_active) {
+          ingredient.is_active = false;
+        }
+      });
+      relatedIngredientListToBeUpdateList.push({
+        materialId: unspentMaterial.id,
+        newRelatedIngredientList: prevRelatedIngredientList
+      });
+    })());
   }
+
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+
   // newlyの処理
   for (const spentMaterial of spentMaterialList) {
     const isAlreadySpent = spentMaterial.obtainedMaterial.related_ingredient_list.some(ingredient => ingredient.id === ingredientId);
