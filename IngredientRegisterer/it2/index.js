@@ -9,6 +9,7 @@ const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
+const baseItemTableName = 'BASE_ITEM_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
