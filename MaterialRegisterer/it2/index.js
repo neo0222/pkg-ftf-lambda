@@ -10,6 +10,7 @@ const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
+const stockTableName = 'STOCK_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
@@ -57,6 +58,7 @@ async function handleMaterialOperation(event) {
 */
 async function putMaterial(tableName, item) {
   const id = await findNextSequence(tableName);
+  item.id = id;
   const itemToBePut = {
     id: id,
     wholesaler_id: optional(item.wholesaler_id),
@@ -94,6 +96,7 @@ async function putMaterial(tableName, item) {
   try {
     await docClient.put(params).promise();
     console.log(`[SUCCESS] registered material data`);
+    await putStock(item);
     await updateSequence(tableName);
   }
   catch(error) {
@@ -149,6 +152,7 @@ async function updateMaterial(tableName, item) {
   try {
     await docClient.put(params).promise();
     console.log(`[SUCCESS] updated material data`);
+    await updateStock(item);
   }
   catch(error) {
     console.log(`[ERROR] failed to update material data`);
@@ -784,6 +788,60 @@ async function updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredien
   }
 
   console.log(`updated base items: ${JSON.stringify(baseItemToBeUpdatedWithIngredientInfoList)}`);
+}
+
+async function putStock(info) {
+  const params = {
+    TableName: stockTableName,
+    Item: {
+      id: info.id,
+      food_type: 'material',
+      measure: {
+        measure_unit: optional(info.measure_unit)
+      },
+      order: {
+        order_unit: optional(info.order_unit)
+      },
+      count: {
+        count_unit: optional(info.count_unit)
+      },
+      minimum: {
+        minimum_unit: optional(info.minimum_unit)
+      },
+      proper: {
+        proper_unit: optional(info.proper_unit)
+      },
+      is_active: true,
+      is_deleted: false
+    }
+  };
+  try {
+    await docClient.put(params).promise();
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function updateStock(info) {
+  const params = {
+    TableName: stockTableName,
+    Key: {
+      food_type: 'material',
+      id: info.id
+    }
+  };
+  const result = await docClient.get(params).promise();
+  const stock = result.Item;
+  stock.measure.measure_unit = optional(info.measure_unit);
+  stock.order.order_unit = optional(info.order_unit);
+  stock.count.count_unit = optional(info.count_unit);
+  stock.price = (convertNum(info.price_per_order) * convertNum(stock.amount_per_order));
+
+  await docClient.put({
+    TableName: stockTableName,
+    Item: stock
+  }).promise();
 }
 
 async function findNextSequence(targetTableName) {
