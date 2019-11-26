@@ -10,6 +10,7 @@ const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
+const stockTableName = 'STOCK_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
@@ -45,6 +46,9 @@ async function handleMaterialOperation(event) {
     case 'update':
       await updateMaterial(materialTableName, event.item);
       break;
+    case 'register-all':
+      await putAllMaterial(materialTableName, event.materialList);
+      break;
   }
 }
 
@@ -57,11 +61,13 @@ async function handleMaterialOperation(event) {
 */
 async function putMaterial(tableName, item) {
   const id = await findNextSequence(tableName);
+  item.id = id;
   const itemToBePut = {
     id: id,
     wholesaler_id: optional(item.wholesaler_id),
     name: optional(item.name),
     price_per_order: optional(item.price_per_order),
+    material_type: optional(item.material_type),
     order: {
       amount_per_order: optional(item.amount_per_order),
       order_unit: optional(item.order_unit)
@@ -94,6 +100,7 @@ async function putMaterial(tableName, item) {
   try {
     await docClient.put(params).promise();
     console.log(`[SUCCESS] registered material data`);
+    await putStock(item);
     await updateSequence(tableName);
   }
   catch(error) {
@@ -101,6 +108,138 @@ async function putMaterial(tableName, item) {
     console.error(error);
     throw error;
   }
+}
+
+/**
+* 食材を新規登録する。
+* 
+* @param tableName テーブル名
+* @param item 登録する商品情報
+*/
+async function putAllMaterial(tableName, materialList) {
+  const id = await findNextSequence(tableName);
+  const promises = [];
+  for (var i = 0; i < materialList.length; i++) {
+    promises.push((async () => {
+      const material = materialList[i];
+      material.id = i + id;
+      material.measure_per_order = material.measure_amount_unit.replace(/[^0-9.]/g, '');
+      material.measure_unit = material.measure_amount_unit.replace(/[^a-zA-Z\/個玉本枚缶袋瓶杯㎏ｇ㌘(ポンド)(セット)(食分)]/g, '');
+      const itemToBePut = {
+        id: material.id,
+        wholesaler_id: optional(getWholesalerId(material.wholesaler_name)),
+        name: optional(material.name),
+        price_per_order: optional(material.price),
+        material_code: optional(material.material_code),
+        material_type: optional(material.material_type),
+        order: {
+          amount_per_order: '1',
+          order_unit: optional(material.order_unit)
+        },
+        count: {
+          count_per_order: '1',
+          count_unit: optional(material.count_unit)
+        },
+        measure: {
+          measure_per_order: optional(material.measure_per_order),
+          measure_unit: optional(material.measure_unit)
+        },
+        minimum: {
+          minimum_amount: optional(material.minimum_amount),
+          minimum_amount_unit: optional(material.minimum_amount_unit)
+        },
+        proper: {
+          proper_amount: optional(material.proper_amount),
+          proper_amount_unit: optional(material.proper_amount_unit)
+        },
+        related_ingredient_list: [],
+        related_base_item_list: [],
+        is_active: true,
+        is_deleted: false
+      };
+      const params = {
+        TableName: tableName,
+        Item: itemToBePut
+      };
+        await docClient.put(params).promise();
+        await putStock(material);
+    })())
+  }
+  try {
+    await Promise.all(promises);
+    await updateSequence(tableName, materialList.length);
+  }
+  catch (error) {
+    console.error(error);
+    throw error;
+  }
+
+}
+
+function getWholesalerId(wholesalerName) {
+  const wholesalerList = [
+    {
+        label: '株式会社大治',
+        value: 1
+    },
+    {
+        label: '協和物産株式会社',
+        value: 2
+    },
+    {
+        label: 'かいせい物産株式会社',
+        value: 3
+    },
+    {
+        label: '株式会社ＲＹコーポレーション　セントラルキッチン',
+        value: 4
+    },
+    {
+        label: '株式会社ＭＯＴＨＥＲＳ',
+        value: 5
+    },
+    {
+        label: 'タカナシ販売株式会社　東京北営業所',
+        value: 6
+    },
+    {
+        label: '有限会社肉のクボタ',
+        value: 7
+    },
+    {
+        label: '株式会社升喜',
+        value: 8
+    },
+    {
+        label: 'キーコーヒー株式会社',
+        value: 9
+    },
+    {
+        label: '亀屋食品株式会社',
+        value: 10
+    },
+    {
+        label: 'ユーシーシーフーヅ株式会社',
+        value: 11
+    },
+    {
+        label: '株式会社リンクモア',
+        value: 12
+    },
+    {
+        label: '株式会社海老正　受注センター',
+        value: 13
+    },
+    {
+        label: '株式会社マルシェベイ',
+        value: 14
+    },
+    {
+        label: '株式会社サンライズＨＡＴＡＫＥカンパニー',
+        value: 15
+    }
+  ];
+  return wholesalerList.find(wholesaler => wholesaler.label === wholesalerName) ? wholesalerList.find(wholesaler => wholesaler.label === wholesalerName).value : undefined;
 }
 
 /**
@@ -149,6 +288,7 @@ async function updateMaterial(tableName, item) {
   try {
     await docClient.put(params).promise();
     console.log(`[SUCCESS] updated material data`);
+    await updateStock(item);
   }
   catch(error) {
     console.log(`[ERROR] failed to update material data`);
@@ -786,6 +926,60 @@ async function updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredien
   console.log(`updated base items: ${JSON.stringify(baseItemToBeUpdatedWithIngredientInfoList)}`);
 }
 
+async function putStock(info) {
+  const params = {
+    TableName: stockTableName,
+    Item: {
+      id: info.id,
+      food_type: 'material',
+      measure: {
+        measure_unit: optional(info.measure_unit)
+      },
+      order: {
+        order_unit: optional(info.order_unit)
+      },
+      count: {
+        count_unit: optional(info.count_unit)
+      },
+      minimum: {
+        minimum_unit: optional(info.minimum_unit)
+      },
+      proper: {
+        proper_unit: optional(info.proper_unit)
+      },
+      is_active: true,
+      is_deleted: false
+    }
+  };
+  try {
+    await docClient.put(params).promise();
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function updateStock(info) {
+  const params = {
+    TableName: stockTableName,
+    Key: {
+      food_type: 'material',
+      id: info.id
+    }
+  };
+  const result = await docClient.get(params).promise();
+  const stock = result.Item;
+  stock.measure.measure_unit = optional(info.measure_unit);
+  stock.order.order_unit = optional(info.order_unit);
+  stock.count.count_unit = optional(info.count_unit);
+  stock.price = (convertNum(info.price_per_order) * convertNum(stock.amount_per_order));
+
+  await docClient.put({
+    TableName: stockTableName,
+    Item: stock
+  }).promise();
+}
+
 async function findNextSequence(targetTableName) {
   const params = {
       TableName: sequenceTableName,
@@ -822,7 +1016,7 @@ async function findNextSequence(targetTableName) {
   }
 }
 
-async function updateSequence(targetTableName) {
+async function updateSequence(targetTableName, numberOfPutMaterial) {
   const params = {
     TableName: sequenceTableName,
     Key: {
@@ -834,7 +1028,7 @@ async function updateSequence(targetTableName) {
     },
     UpdateExpression: "SET #c = #c + :incr, #n = #n + :incr",
     ExpressionAttributeValues: { 
-      ":incr": 1
+      ":incr": numberOfPutMaterial ? numberOfPutMaterial : 1
     },
     ReturnValues: "UPDATED_NEW"
   };
