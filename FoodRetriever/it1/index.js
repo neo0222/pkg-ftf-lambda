@@ -5,6 +5,7 @@ const docClient = new AWS.DynamoDB.DocumentClient({
 
 const envSuffix = process.env['ENVIRONMENT'];
 
+const foodTableName = 'FOOD_' + envSuffix;
 const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
@@ -80,13 +81,13 @@ async function handleMaterialOperation(event) {
   switch (event.operation) {
     case 'findAll':
       console.log('invoked');
-      await getMaterial(materialTableName, event.item);
+      await getMaterial(foodTableName, event.item, event.shopName);
       break;
     case 'find-unregistered-material':
-      await getUnregisteredMaterial(event.payload);
+      await getUnregisteredMaterial(event.payload, event.shopName);
       break;
     case 'find-by-material-type':
-      await getMaterialByMaterialType(event.payload);
+      await getMaterialByMaterialType(event.payload, event.shopName);
       break;
     case 'update':
       // await updateMaterial(materialTableName, event.item);
@@ -136,12 +137,20 @@ async function getProduct(productTableName, item) {
   }
 }
 
-async function getMaterial(materialTableName, item) {
+async function getMaterial(foodTableName, item, shopName) {
   const params = {
-      TableName: materialTableName
+      TableName: foodTableName,
+      KeyConditionExpression: "#shopNameFoodType = :shopNameFoodType",
+      ExpressionAttributeNames:{
+          "#shopNameFoodType": "shop_name_food_type"
+      },
+      ExpressionAttributeValues: {
+          ":shopNameFoodType": shopName + ':material'
+      }
   };
+  console.log(params)
   try {
-    const result = await docClient.scan(params).promise();
+    const result = await docClient.query(params).promise();
     console.log(`[SUCCESS] retrieved ${result.Count} data: `);
     for (const item of result.Items) {
       response.body.foodList.push({
@@ -248,18 +257,18 @@ async function getBaseItem(baseItemTableName, item) {
   }
 }
 
-async function getUnregisteredMaterial(payload) {
+async function getUnregisteredMaterial(payload, shopName) {
   const materialList = payload.materialList;
   const unregisteredMaterialCodeList = [];
   const promises = []
   for (const material of materialList) {
     promises.push((async () => {
       const params = {
-        TableName: materialTableName,
-        IndexName: 'material_code-index',//インデックス名を指定
-        ExpressionAttributeNames:{'#m': 'material_code'},
-        ExpressionAttributeValues:{':val': material.material_code},
-        KeyConditionExpression: '#m = :val'//検索対象が満たすべき条件を指定
+        TableName: foodTableName,
+        IndexName: 'shop_name_food_type-material_code-index',//インデックス名を指定
+        ExpressionAttributeNames:{'#sf': 'shop_name_food_type', '#m': 'material_code'},
+        ExpressionAttributeValues:{':sf': shopName + ':material', ':m': material.material_code},
+        KeyConditionExpression: '#sf = :sf and #m = :m'//検索対象が満たすべき条件を指定
       };
       try {
         const result = await docClient.query(params).promise();
@@ -285,14 +294,14 @@ async function getUnregisteredMaterial(payload) {
   }
 }
 
-async function getMaterialByMaterialType(payload) {
+async function getMaterialByMaterialType(payload, shopName) {
   const materialType = payload.materialType;
   const params = {
-    TableName: materialTableName,
-    IndexName: 'material_type-index',//インデックス名を指定
-    ExpressionAttributeNames:{'#m': 'material_type'},
-    ExpressionAttributeValues:{':val': materialType},
-    KeyConditionExpression: '#m = :val'//検索対象が満たすべき条件を指定
+    TableName: foodTableName,
+    IndexName: 'shop_name_food_type-material_type-index',//インデックス名を指定
+    ExpressionAttributeNames:{'#sf': 'shop_name_food_type', '#m': 'material_type'},
+    ExpressionAttributeValues:{':sf': shopName + ':material', ':m': materialType},
+    KeyConditionExpression: '#sf = :sf and #m = :m'//検索対象が満たすべき条件を指定
   };
   try {
     const result = await docClient.query(params).promise();

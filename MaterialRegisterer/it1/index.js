@@ -8,6 +8,7 @@ const envSuffix = process.env['ENVIRONMENT'];
 const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
+const foodTableName = 'FOOD_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
 const stockTableName = 'STOCK_' + envSuffix;
@@ -41,13 +42,13 @@ async function handleMaterialOperation(event) {
   // todo: implement
   switch (event.operation) {
     case 'register':
-      await putMaterial(materialTableName, event.item);
+      await putMaterial(foodTableName, event.item);
       break;
     case 'update':
-      await updateMaterial(materialTableName, event.item);
+      await updateMaterial(foodTableName, event.item);
       break;
     case 'register-all':
-      await putAllMaterial(materialTableName, event.materialList);
+      await putAllMaterial(foodTableName, event.materialList, event.shopName);
       break;
   }
 }
@@ -116,8 +117,8 @@ async function putMaterial(tableName, item) {
 * @param tableName テーブル名
 * @param item 登録する商品情報
 */
-async function putAllMaterial(tableName, materialList) {
-  const id = await findNextSequence(tableName);
+async function putAllMaterial(tableName, materialList, shopName) {
+  const id = await findNextSequence(tableName, shopName);
   const promises = [];
   for (var i = 0; i < materialList.length; i++) {
     promises.push((async () => {
@@ -126,6 +127,7 @@ async function putAllMaterial(tableName, materialList) {
       material.measure_per_order = material.measure_amount_unit.replace(/[^0-9.]/g, '');
       material.measure_unit = material.measure_amount_unit.replace(/[^a-zA-Z\/個玉本枚缶袋瓶杯㎏ｇ㌘(ポンド)(セット)(食分)]/g, '');
       const itemToBePut = {
+        shop_name_food_type: shopName + ':material',
         id: material.id,
         wholesaler_id: optional(getWholesalerId(material.wholesaler_name)),
         name: optional(material.name),
@@ -162,12 +164,12 @@ async function putAllMaterial(tableName, materialList) {
         Item: itemToBePut
       };
         await docClient.put(params).promise();
-        await putStock(material);
+        await putStock(material, shopName);
     })())
   }
   try {
     await Promise.all(promises);
-    await updateSequence(tableName, materialList.length);
+    await updateSequence(tableName, shopName, materialList.length);
   }
   catch (error) {
     console.error(error);
@@ -926,12 +928,12 @@ async function updateBaseItemWithIngredientCost(baseItemToBeUpdatedWithIngredien
   console.log(`updated base items: ${JSON.stringify(baseItemToBeUpdatedWithIngredientInfoList)}`);
 }
 
-async function putStock(info) {
+async function putStock(info, shopName) {
   const params = {
     TableName: stockTableName,
     Item: {
       id: info.id,
-      food_type: 'material',
+      shop_name_food_type: shopName + ':material',
       measure: {
         measure_unit: optional(info.measure_unit)
       },
@@ -980,11 +982,12 @@ async function updateStock(info) {
   }).promise();
 }
 
-async function findNextSequence(targetTableName) {
+async function findNextSequence(targetTableName, shopName) {
   const params = {
       TableName: sequenceTableName,
       Key: {
-        'table_name': targetTableName
+        'table_name': targetTableName,
+        'partition_key': shopName + ':material'
       }
   };
   try {
@@ -994,7 +997,7 @@ async function findNextSequence(targetTableName) {
     }
   }
   catch(error) {
-    console.error(`[ERROR] failed to retrieve food data`);
+    console.error(`[ERROR] failed to retrieve next sequence`);
     console.error(error);
     throw error;
   }
@@ -1002,6 +1005,7 @@ async function findNextSequence(targetTableName) {
     TableName: sequenceTableName,
     Item: {
       table_name: targetTableName,
+      partition_key: shopName + ':material',
       current_sequence: 0,
       next_sequence: 1
     }
@@ -1016,11 +1020,12 @@ async function findNextSequence(targetTableName) {
   }
 }
 
-async function updateSequence(targetTableName, numberOfPutMaterial) {
+async function updateSequence(targetTableName, shopName, numberOfPutMaterial) {
   const params = {
     TableName: sequenceTableName,
     Key: {
-      'table_name': targetTableName
+      'table_name': targetTableName,
+      'partition_key': shopName + ':material'
     },
     ExpressionAttributeNames: {
       '#n': 'next_sequence',
@@ -1037,7 +1042,7 @@ async function updateSequence(targetTableName, numberOfPutMaterial) {
     console.error(`[SUCCESS] updated sequence ${JSON.stringify(result)}`);
   }
   catch(error) {
-    console.error(`[ERROR] failed to retrieve food data`);
+    console.error(`[ERROR] failed to update sequence data`);
     console.error(error);
     throw error;
   }
