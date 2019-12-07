@@ -110,7 +110,7 @@ async function handleIngredientOperation(event) {
 async function handleBaseItemOperation(event) {
   switch (event.operation) {
     case 'findAll':
-      await getBaseItem(baseItemTableName, event.item);
+      await getBaseItem(baseItemTableName, event.item, event.shopName);
       break;
   }
 }
@@ -227,12 +227,19 @@ async function getIngredient(shopName) {
   }
 }
 
-async function getBaseItem(baseItemTableName, item) {
+async function getBaseItem(baseItemTableName, item, shopName) {
   const params = {
-    TableName: baseItemTableName
+    TableName: foodTableName,
+    KeyConditionExpression: "#shopNameFoodType = :shopNameFoodType",
+    ExpressionAttributeNames:{
+        "#shopNameFoodType": "shop_name_food_type"
+    },
+    ExpressionAttributeValues: {
+        ":shopNameFoodType": shopName + ':base-item'
+    }
   };
   try {
-    const result = await docClient.scan(params).promise();
+    const result = await docClient.query(params).promise();
     console.log(`[SUCCESS] retrieved ${result.Count} base item data: ${JSON.stringify(result.Items)}`);
     for (const item of result.Items) {
       response.body.foodList.push({
