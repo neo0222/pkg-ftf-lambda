@@ -1101,7 +1101,7 @@ async function obtainUnspentMaterial(baseItemId, newRecipe, shopName) {
 * @param newlySpentMaterialList { obtainedMaterial: DBから取得したmaterial, material: レシピの材料としてのmaterial }
 * @return 使われなくなった食材
 */
-async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, baseItemId, baseItemName, shopName) {
+async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, baseItemId, preparationType, baseItemName, shopName) {
   const relatedBaseItemListToBeUpdateList = [];
   // unspentの処理
   for (const unspentMaterial of unspentMaterialList) {
