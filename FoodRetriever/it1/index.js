@@ -99,7 +99,7 @@ async function handleIngredientOperation(event) {
   // todo: implement
   switch (event.operation) {
     case 'findAll':
-      await getIngredient(ingredientTableName, event.item);
+      await getIngredient(event.shopName);
       break;
     // case 'update':
     //   await updateIngredient(ingredientTableName, event.payload);
@@ -184,12 +184,19 @@ async function getMaterial(foodTableName, item, shopName) {
   }
 }
 
-async function getIngredient(ingredientTableName, item) {
+async function getIngredient(shopName) {
   const params = {
-    TableName: ingredientTableName
-  };
+    TableName: foodTableName,
+    KeyConditionExpression: "#shopNameFoodType = :shopNameFoodType",
+    ExpressionAttributeNames:{
+        "#shopNameFoodType": "shop_name_food_type"
+    },
+    ExpressionAttributeValues: {
+        ":shopNameFoodType": shopName + ':ingredient'
+    }
+};
   try {
-    const result = await docClient.scan(params).promise();
+    const result = await docClient.query(params).promise();
     console.log(`[SUCCESS] retrieved ${result.Count} data: ${JSON.stringify(result.Items)}`);
     for (const item of result.Items) {
       response.body.foodList.push({
