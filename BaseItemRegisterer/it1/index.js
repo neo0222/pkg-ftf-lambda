@@ -44,7 +44,7 @@ async function handleBaseItemOperation(event) {
       await putBaseItem(foodTableName, event.payload, event.shopName);
       break;
     case 'update':
-      await updateBaseItem(baseItemTableName, event.payload);
+      await updateBaseItem(baseItemTableName, event.payload, event.shopName);
       break;
   }
 }
@@ -123,19 +123,19 @@ async function putBaseItem(tableName, payload, shopName) {
   }
 }
 
-async function updateBaseItem(tableName, payload) {
+async function updateBaseItem(tableName, payload, shopName) {
   const info = payload.baseItemInfo;
   const recipe = payload.recipe; // ここには食材と材料が混在している
   
   // 材料のみの原価の計算
-  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostForProduct(recipe.filter(ingredient => ingredient.food_type === 'ingredient'), info);
+  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostForProduct(recipe.filter(ingredient => ingredient.food_type === 'ingredient'), info, shopName);
   // 食材のみの原価の計算
-  const { costForMaterial, newRecipeRelatedToMaterial } = await calcCostForIngredient(recipe.filter(material => material.food_type === 'material'), info);
+  const { costForMaterial, newRecipeRelatedToMaterial } = await calcCostForIngredient(recipe.filter(material => material.food_type === 'material'), info, shopName);
   
   // 合体
   info.cost = (convertNum(costForIngredient) + convertNum(costForMaterial)).toString();
 
-  await asyncUpdateRelatedBaseItemAndProductForCost(info);
+  await asyncUpdateRelatedBaseItemAndProductForCost(info, shopName);
 
   // 空文字消す
   removeEmptyString(info);
@@ -147,8 +147,9 @@ async function updateBaseItem(tableName, payload) {
   }
 
   const params = {
-    TableName: tableName,
+    TableName: foodTableName,
     Item: {
+      shop_name_food_type: shopName + ':base-item',
       id: info.id,
       name: optional(info.name),
       price_per_prepare: optional(info.cost),
@@ -182,7 +183,6 @@ async function updateBaseItem(tableName, payload) {
   try {
     await docClient.put(params).promise();
     console.info(`[SUCCESS] updated base item data`);
-    await updateSequence(tableName);
   }
   catch(error) {
     console.log(`[ERROR] failed to update base item data`);
@@ -197,7 +197,7 @@ async function updateBaseItem(tableName, payload) {
 * @param tableName テーブル名
 * @param item 登録する食材情報
 */
-async function asyncUpdateRelatedBaseItemAndProductForCost(item) {
+async function asyncUpdateRelatedBaseItemAndProductForCost(item, shopName) {
   const productToBeUpdatedWithBaseItemInfoList = []
   const updatedBaseItemInfoList = [{
     baseItemId: item.id,
@@ -209,7 +209,7 @@ async function asyncUpdateRelatedBaseItemAndProductForCost(item) {
   // ##### 5. 商品ベース　→　商品 ###########################################
 
   // price_per_prepareの変更を関連商品のレシピのcostに反映させる
-  await calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList);
+  await calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList, shopName);
   // 商品のレシピの変更を商品の原価に反映させる
   await updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfoList);
 }
@@ -220,7 +220,7 @@ async function asyncUpdateRelatedBaseItemAndProductForCost(item) {
 * @param updatedBaseItemInfoList 何らかの材料の情報が更新された商品に関する情報
 * @param productToBeUpdatedWithBaseItemInfoList 更新情報に基づいて原価を再計算した商品の情報からなる配列
 */
-async function calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList) {
+async function calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, productToBeUpdatedWithBaseItemInfoList, shopName) {
   const obtainedProductList = [];
   const promises = [];
   const productIdListWithNoDuplication = [];
@@ -237,8 +237,9 @@ async function calcProductCostByNewBaseItemCost(updatedBaseItemInfoList, product
   for (const productId of productIdListWithNoDuplication) {
     promises.push((async () => {
       const params = {
-        TableName: productTableName,
+        TableName: foodTableName,
         Key: {
+          'shop_name_food_type': shopName + ':product',
           'id': productId
         }
       };
@@ -312,7 +313,7 @@ async function updateProductWithBasePriceCost(productToBeUpdatedWithBaseItemInfo
   for (const item of productToBeUpdatedWithBaseItemInfoList) {
     promises.push((async () => {
       const params = {
-        TableName: productTableName,
+        TableName: foodTableName,
         Item: item
       };
       await docClient.put(params).promise();
