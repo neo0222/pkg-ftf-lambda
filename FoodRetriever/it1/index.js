@@ -71,7 +71,7 @@ async function handleFoodType(event) {
 async function handleProductOperation(event) {
   switch (event.operation) {
     case 'findAll':
-      await getProduct(productTableName, event.item);
+      await getProduct(productTableName, event.item, event.shopName);
       break;
   }
 }
@@ -119,12 +119,19 @@ async function handleWholesalerOperation(event) {
   //todo: implement
 }
 
-async function getProduct(productTableName, item) {
+async function getProduct(productTableName, item, shopName) {
   const params = {
-      TableName: productTableName
-  };
+    TableName: foodTableName,
+    KeyConditionExpression: "#shopNameFoodType = :shopNameFoodType",
+    ExpressionAttributeNames:{
+        "#shopNameFoodType": "shop_name_food_type"
+    },
+    ExpressionAttributeValues: {
+        ":shopNameFoodType": shopName + ':product'
+    }
+};
   try {
-    const result = await docClient.scan(params).promise();
+    const result = await docClient.query(params).promise();
     console.log(`[SUCCESS] retrieved ${result.Count} data: `);
     for (const item of result.Items) {
       response.body.foodList.push(item);
