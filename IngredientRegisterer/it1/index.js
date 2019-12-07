@@ -951,7 +951,7 @@ async function findNextSequence(targetTableName, shopName) {
   const paramsForPutNewRecord = {
     TableName: sequenceTableName,
     Item: {
-      table_name: targetTableName,
+      table_name: foodTableName,
       partition_key: shopName + ':ingredient',
       current_sequence: 0,
       next_sequence: 1
@@ -973,7 +973,7 @@ async function updateSequence(targetTableName, shopName) {
     TableName: sequenceTableName,
     Key: {
       'table_name': targetTableName,
-      'partition_key': shopName + ':material'
+      'partition_key': shopName + ':ingredient'
     },
     ExpressionAttributeNames: {
       '#n': 'next_sequence',
