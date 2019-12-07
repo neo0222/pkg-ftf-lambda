@@ -6,6 +6,7 @@ const docClient = new AWS.DynamoDB.DocumentClient({
 
 const envSuffix = process.env['ENVIRONMENT'];
 
+const foodTableName = 'FOOD_' + envSuffix;
 const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
@@ -40,7 +41,7 @@ async function main(event, context) {
 async function handleBaseItemOperation(event) {
   switch (event.operation) {
     case 'register':
-      await putBaseItem(baseItemTableName, event.payload);
+      await putBaseItem(foodTableName, event.payload, event.shopName);
       break;
     case 'update':
       await updateBaseItem(baseItemTableName, event.payload);
@@ -48,8 +49,8 @@ async function handleBaseItemOperation(event) {
   }
 }
 
-async function putBaseItem(tableName, payload) {
-  const id = await findNextSequence(tableName);
+async function putBaseItem(tableName, payload, shopName) {
+  const id = await findNextSequence(tableName, shopName);
   const info = payload.baseItemInfo;
   const recipe = payload.recipe; // ここには食材と材料が混在している
   // is_activeフラグtrueでセット
@@ -59,9 +60,9 @@ async function putBaseItem(tableName, payload) {
   info.is_active = true;
   
   // 材料のみの原価の計算
-  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostForProduct(recipe.filter(ingredient => ingredient.food_type === 'ingredient'), info);
+  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostForProduct(recipe.filter(ingredient => ingredient.food_type === 'ingredient'), info, shopName);
   // 食材のみの原価の計算
-  const { costForMaterial, newRecipeRelatedToMaterial } = await calcCostForIngredient(recipe.filter(material => material.food_type === 'material'), info);
+  const { costForMaterial, newRecipeRelatedToMaterial } = await calcCostForIngredient(recipe.filter(material => material.food_type === 'material'), info, shopName);
   console.log(JSON.stringify(newRecipeRelatedToIngredient));
   console.log(JSON.stringify(newRecipeRelatedToMaterial));
   
@@ -79,6 +80,7 @@ async function putBaseItem(tableName, payload) {
   const params = {
     TableName: tableName,
     Item: {
+      shop_name_food_type: shopName + ':base-item',
       id: id,
       name: optional(info.name),
       price_per_prepare: optional(info.cost),
@@ -112,7 +114,7 @@ async function putBaseItem(tableName, payload) {
   try {
     await docClient.put(params).promise();
     console.info(`[SUCCESS] registered base item data`);
-    await updateSequence(tableName);
+    await updateSequence(tableName, shopName);
   }
   catch(error) {
     console.log(`[ERROR] failed to register base item data`);
@@ -401,14 +403,15 @@ async function updateProduct(tableName, payload) {
 }
 
 
-async function calcCostForProduct(recipe, info) {
+async function calcCostForProduct(recipe, info, shopName) {
   let cost = 0;
   const spentIngredientList = [];
   for (const ingredient of recipe) {
     // 材料データ取得
     const params = {
-      TableName: ingredientTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':ingredient',
         'id': ingredient.id
       }
     };
@@ -433,8 +436,8 @@ async function calcCostForProduct(recipe, info) {
   }
   // 関連材料の更新
   // 今回使わなくなった材料を抽出activate = falseに
-  const unspentIngredientList = await obtainUnspentIngredient(info.id, recipe);
-  await updateRelatedBaseItemOfIngredient(unspentIngredientList, spentIngredientList, info.id, info.name);
+  const unspentIngredientList = await obtainUnspentIngredient(info.id, recipe, shopName);
+  await updateRelatedBaseItemOfIngredient(unspentIngredientList, spentIngredientList, info.id, info.name, shopName);
   
   // レシピのデータソース＝使われなくなりinactiveになった材料 ＋ 続投 ＋ 新規材料
   return  { costForIngredient: cost.toString(), newRecipeRelatedToIngredient: unspentIngredientList.concat(recipe) };
@@ -447,10 +450,11 @@ async function calcCostForProduct(recipe, info) {
 * @param newRecipe
 * @return 使われなくなった食材
 */
-async function obtainUnspentIngredient(baseItemId, newRecipe) {
+async function obtainUnspentIngredient(baseItemId, newRecipe, shopName) {
   const params = {
-    TableName: baseItemTableName,
+    TableName: foodTableName,
     Key: {
+      'shop_name_food_type': shopName + ':base-item',
       'id': baseItemId
     }
   };
@@ -478,14 +482,15 @@ async function obtainUnspentIngredient(baseItemId, newRecipe) {
 * @param productId 新たに関連商品として登録する商品のID
 * @param productName 新たに関連商品として登録する商品の名称
 */
-async function updateRelatedBaseItemOfIngredient(unspentIngredientList, spentIngredientList, baseItemId, baseItemName) {
+async function updateRelatedBaseItemOfIngredient(unspentIngredientList, spentIngredientList, baseItemId, baseItemName, shopName) {
   const relatedBaseItemListToBeUpdateList = [];
   // unspentの処理
   for (const unspentIngredient of unspentIngredientList) {
     // レシピから取得したMaterialのデータを元に、DBから食材データを取得
     const params = {
-      TableName: ingredientTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':ingredient',
         'id': unspentIngredient.id
       }
     };
@@ -543,8 +548,9 @@ async function updateRelatedBaseItemOfIngredient(unspentIngredientList, spentIng
       removeEmptyString(baseItem);
     }
     const params = {
-      TableName: ingredientTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':ingredient',
         'id': relatedBaseItemList.ingredientId
       },
       ExpressionAttributeNames: {
@@ -1020,14 +1026,15 @@ async function updateIngredient(tableName, payload) {
 }
 
 
-async function calcCostForIngredient(recipe, info) {
+async function calcCostForIngredient(recipe, info, shopName) {
   let cost = 0;
   const spentMaterialList = [];
   for (const material of recipe) {
     // 食材データ取得
     const params = {
-      TableName: materialTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':material',
         'id': material.id
       }
     };
@@ -1051,8 +1058,8 @@ async function calcCostForIngredient(recipe, info) {
   }
   // 関連食材の更新
   // 今回使わなくなった食材を抽出activate = falseに
-  const unspentMaterialList = await obtainUnspentMaterial(info.id, recipe);
-  await updateRelatedIngredient(unspentMaterialList, spentMaterialList, info.id, info.preparation_type, info.name);
+  const unspentMaterialList = await obtainUnspentMaterial(info.id, recipe, shopName);
+  await updateRelatedIngredient(unspentMaterialList, spentMaterialList, info.id, info.preparation_type, info.name, shopName);
 
   // レシピのデータソース＝使われなくなりinactiveになった材料 ＋ 続投 ＋ 新規材料
   return  { costForMaterial: cost.toString(), newRecipeRelatedToMaterial: unspentMaterialList.concat(recipe) };
@@ -1065,10 +1072,11 @@ async function calcCostForIngredient(recipe, info) {
 * @param newRecipe
 * @return 使われなくなった食材
 */
-async function obtainUnspentMaterial(baseItemId, newRecipe) {
+async function obtainUnspentMaterial(baseItemId, newRecipe, shopName) {
   const params = {
-    TableName: baseItemTableName,
+    TableName: foodTableName,
     Key: {
+      'shop_name_food_type': shopName + ':base-item',
       'id': baseItemId
     }
   };
@@ -1092,14 +1100,15 @@ async function obtainUnspentMaterial(baseItemId, newRecipe) {
 * @param newlySpentMaterialList { obtainedMaterial: DBから取得したmaterial, material: レシピの材料としてのmaterial }
 * @return 使われなくなった食材
 */
-async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, baseItemId, baseItemName) {
+async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, baseItemId, baseItemName, shopName) {
   const relatedBaseItemListToBeUpdateList = [];
   // unspentの処理
   for (const unspentMaterial of unspentMaterialList) {
     // レシピから取得したMaterialのデータを元に、DBから食材データを取得
     const params = {
-      TableName: materialTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':material',
         'id': unspentMaterial.id
       }
     };
@@ -1159,8 +1168,9 @@ async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, b
     }
     // 消したら更新処理
     const params = {
-      TableName: materialTableName,
+      TableName: foodTableName,
       Key: {
+        'shop_name_food_type': shopName + ':material',
         'id': relatedBaseItemList.materialId
       },
       ExpressionAttributeNames: {
@@ -1176,11 +1186,12 @@ async function updateRelatedIngredient(unspentMaterialList, spentMaterialList, b
 }
 
 
-async function findNextSequence(targetTableName) {
+async function findNextSequence(targetTableName, shopName) {
   const params = {
       TableName: sequenceTableName,
       Key: {
-        'table_name': targetTableName
+        'table_name': targetTableName,
+        'partition_key': shopName + ':base-item'
       }
   };
   try {
@@ -1190,7 +1201,7 @@ async function findNextSequence(targetTableName) {
     }
   }
   catch(error) {
-    console.error(`[ERROR] failed to retrieve food data`);
+    console.error(`[ERROR] failed to retrieve next sequence`);
     console.error(error);
     throw error;
   }
@@ -1198,6 +1209,7 @@ async function findNextSequence(targetTableName) {
     TableName: sequenceTableName,
     Item: {
       table_name: targetTableName,
+      partition_key: shopName + ':base-item',
       current_sequence: 0,
       next_sequence: 1
     }
@@ -1212,11 +1224,12 @@ async function findNextSequence(targetTableName) {
   }
 }
 
-async function updateSequence(targetTableName) {
+async function updateSequence(targetTableName, shopName) {
   const params = {
     TableName: sequenceTableName,
     Key: {
-      'table_name': targetTableName
+      'table_name': targetTableName,
+      'partition_key': shopName + ':base-item'
     },
     ExpressionAttributeNames: {
       '#n': 'next_sequence',
@@ -1233,7 +1246,7 @@ async function updateSequence(targetTableName) {
     console.error(`[SUCCESS] updated sequence ${JSON.stringify(result)}`);
   }
   catch(error) {
-    console.error(`[ERROR] failed to retrieve food data`);
+    console.error(`[ERROR] failed to increment sequence`);
     console.error(error);
     throw error;
   }
