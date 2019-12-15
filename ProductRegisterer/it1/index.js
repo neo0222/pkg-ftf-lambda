@@ -41,10 +41,10 @@ async function main(event, context) {
 async function handleProductOperation(event) {
   switch (event.operation) {
     case 'register':
-      await putProduct(productTableName, event.payload, event.shopName);
+      await putProduct(foodTableName, event.payload, event.shopName);
       break;
     case 'update':
-      await updateProduct(productTableName, event.payload);
+      await updateProduct(foodTableName, event.payload, event.shopName);
       break;
   }
 }
@@ -93,18 +93,19 @@ async function putProduct(tableName, payload, shopName) {
   }
 }
 
-async function updateProduct(tableName, payload) {
+async function updateProduct(tableName, payload, shopName) {
   const info = payload.productInfo;
   const recipe = payload.recipe;
   const requiredBaseItemList = payload.requiredBaseItemList;
   
   // 原価の計算
-  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostRelatedToIngredient(recipe, info);
-  const { costForBaseItem, newRecipeRelatedToBaseItem } = await calcCostRelatedToBaseItem(requiredBaseItemList, info);
+  const { costForIngredient, newRecipeRelatedToIngredient } = await calcCostRelatedToIngredient(recipe, info, shopName);
+  const { costForBaseItem, newRecipeRelatedToBaseItem } = await calcCostRelatedToBaseItem(requiredBaseItemList, info, shopName);
 
   info.cost = (Number(costForIngredient) + Number(costForBaseItem)).toString();
   info.required_ingredient_list = newRecipeRelatedToIngredient;
   info.required_base_item_list = newRecipeRelatedToBaseItem;
+  info.shop_name_food_type = shopName + ':product';
 
   const keys = Object.keys(info).filter(key => key !== 'is_active' && key !== 'is_deleted');
   for (const key of keys) {
