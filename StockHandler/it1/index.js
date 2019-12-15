@@ -4,7 +4,7 @@ const docClient = new AWS.DynamoDB.DocumentClient({
 });
 
 const envSuffix = process.env['ENVIRONMENT'];
-
+const foodTableName = 'FOOD_' + envSuffix;
 const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
@@ -68,12 +68,12 @@ async function handleOperation(event) {
 async function getAllStocks(event) {
   const params = {
     TableName: stockTableName,
-    KeyConditionExpression: "#foodType = :foodType",
+    KeyConditionExpression: "#shopNameFoodType = :shopNameFoodType",
     ExpressionAttributeNames:{
-        "#foodType": "food_type"
+        "#shopNameFoodType": "shop_name_food_type"
     },
     ExpressionAttributeValues: {
-        ":foodType": event.foodType
+        ":shopNameFoodType": event.shopName + ':' + event.foodType
     }
   };
   try {
@@ -128,7 +128,7 @@ async function registerStock(event) {
   const result = await docClient.get({
     TableName: stockTableName,
     Key: {
-      'food_type': event.foodType === '食材' ? 'material': 'ingredient',
+      'shop_name_food_type': event.shopName + ':' + (event.foodType === '食材' ? 'material': 'ingredient'),
       'id': event.payload.id
     }
   }).promise();
@@ -143,8 +143,9 @@ async function registerMaterialStock(event, stock) {
   const payload = event.payload;
 
   const params = {
-    TableName: materialTableName,
+    TableName: foodTableName,
     Key: {
+      'shop_name_food_type': event.shopName + ':material',
       'id': payload.id
     }
   };
@@ -184,8 +185,9 @@ async function registerIngredientStock(event, stock) {
   const payload = event.payload;
 
   const params = {
-    TableName: ingredientTableName,
+    TableName: foodTableName,
     Key: {
+      'shop_name_food_type': event.shopName + ':ingredient',
       'id': payload.id
     }
   };
