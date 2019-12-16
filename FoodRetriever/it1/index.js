@@ -10,6 +10,7 @@ const productTableName = 'PRODUCT_' + envSuffix;
 const ingredientTableName = 'INGREDIENT_' + envSuffix;
 const materialTableName = 'MATERIAL_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
+const wholesalerTableName = 'WHOLESALER_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
@@ -116,7 +117,11 @@ async function handleBaseItemOperation(event) {
 }
 
 async function handleWholesalerOperation(event) {
-  //todo: implement
+  switch (event.operation) {
+    case 'findAll':
+      await getWholesaler(wholesalerTableName, event.item, event.shopName);
+      break;
+  }
 }
 
 async function getProduct(productTableName, item, shopName) {
@@ -130,6 +135,31 @@ async function getProduct(productTableName, item, shopName) {
         ":shopNameFoodType": shopName + ':product'
     }
 };
+  try {
+    const result = await docClient.query(params).promise();
+    console.log(`[SUCCESS] retrieved ${result.Count} data: `);
+    for (const item of result.Items) {
+      response.body.foodList.push(item);
+    }
+  }
+  catch(error) {
+    console.log(`[ERROR] failed to retrieve food data`);
+    console.error(error);
+    throw error;
+  }
+}
+
+async function getWholesaler(tableName, item, shopName) {
+  const params = {
+    TableName: tableName,
+    KeyConditionExpression: "#shopName = :shopName",
+    ExpressionAttributeNames:{
+        "#shopName": "shop_name"
+    },
+    ExpressionAttributeValues: {
+        ":shopName": shopName
+    }
+  };
   try {
     const result = await docClient.query(params).promise();
     console.log(`[SUCCESS] retrieved ${result.Count} data: `);
