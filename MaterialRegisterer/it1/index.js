@@ -12,6 +12,7 @@ const foodTableName = 'FOOD_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
 const stockTableName = 'STOCK_' + envSuffix;
+const wholesalerTableName = 'WHOLESALER_' + envSuffix;
 
 exports.handler = async (event, context) => {
   // TODO implement
@@ -118,6 +119,7 @@ async function putMaterial(tableName, item) {
 * @param item 登録する商品情報
 */
 async function putAllMaterial(tableName, materialList, shopName) {
+  const wholesalerList = await putAllWholesaler(materialList, shopName);
   const id = await findNextSequence(tableName, shopName);
   const promises = [];
   for (var i = 0; i < materialList.length; i++) {
@@ -129,7 +131,7 @@ async function putAllMaterial(tableName, materialList, shopName) {
       const itemToBePut = {
         shop_name_food_type: shopName + ':material',
         id: material.id,
-        wholesaler_id: optional(getWholesalerId(material.wholesaler_name)),
+        wholesaler_id: optional(getWholesalerId(material.wholesaler_name, wholesalerList)),
         name: optional(material.name),
         price_per_order: optional(material.price),
         material_code: optional(material.material_code),
@@ -178,70 +180,44 @@ async function putAllMaterial(tableName, materialList, shopName) {
 
 }
 
-function getWholesalerId(wholesalerName) {
-  const wholesalerList = [
-    {
-        label: '株式会社大治',
-        value: 1
+async function putAllWholesaler(materialList, shopName) {
+  let id = await findNextSequence(wholesalerTableName, shopName);
+  const wholesalerNameList = Array.from(new Set(materialList.map(material => material.wholesaler_name)));
+  console.log(JSON.stringify(wholesalerNameList))
+  for (const wholesalerName of wholesalerNameList) {
+    const params = {
+      TableName: wholesalerTableName,
+      Item: {
+        shop_name: shopName,
+        id: id,
+        name: wholesalerName
+      }
+    };
+    await docClient.put(params).promise();
+    id++;
+  }
+
+  const paramsForGet = {
+    TableName: wholesalerTableName,
+    KeyConditionExpression: "#shopName = :shopName",
+    ExpressionAttributeNames:{
+        "#shopName": "shop_name"
     },
-    {
-        label: '協和物産株式会社',
-        value: 2
-    },
-    {
-        label: 'かいせい物産株式会社',
-        value: 3
-    },
-    {
-        label: '株式会社ＲＹコーポレーション　セントラルキッチン',
-        value: 4
-    },
-    {
-        label: '株式会社ＭＯＴＨＥＲＳ',
-        value: 5
-    },
-    {
-        label: 'タカナシ販売株式会社　東京北営業所',
-        value: 6
-    },
-    {
-        label: '有限会社肉のクボタ',
-        value: 7
-    },
-    {
-        label: '株式会社升喜',
-        value: 8
-    },
-    {
-        label: 'キーコーヒー株式会社',
-        value: 9
-    },
-    {
-        label: '亀屋食品株式会社',
-        value: 10
-    },
-    {
-        label: 'ユーシーシーフーヅ株式会社',
-        value: 11
-    },
-    {
-        label: '株式会社リンクモア',
-        value: 12
-    },
-    {
-        label: '株式会社海老正　受注センター',
-        value: 13
-    },
-    {
-        label: '株式会社マルシェベイ',
-        value: 14
-    },
-    {
-        label: '株式会社サンライズＨＡＴＡＫＥカンパニー',
-        value: 15
+    ExpressionAttributeValues: {
+        ":shopName": shopName
     }
-  ];
-  return wholesalerList.find(wholesaler => wholesaler.label === wholesalerName) ? wholesalerList.find(wholesaler => wholesaler.label === wholesalerName).value : undefined;
+  };
+  const result = await docClient.query(paramsForGet).promise();
+  return result.Items.map(item => {
+    return {
+      id: item.id,
+      name: item.name
+    }
+  });
+}
+
+function getWholesalerId(wholesalerName, wholesalerList) {
+  return wholesalerList.find(wholesaler => wholesaler.name === wholesalerName) ? wholesalerList.find(wholesaler => wholesaler.name === wholesalerName).id : undefined;
 }
 
 /**
