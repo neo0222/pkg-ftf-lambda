@@ -197,14 +197,14 @@ async function obtainConfirmedProductFlow(date, shopName) {
 
 async function calcNewFoodConsumptionFlow(productFlow, shopName) {
   // 材料算出（非同期）
-  const ingredientFlow = await calcIngredientConsumption(productFlow);
+  const ingredientFlow = await calcIngredientConsumption(productFlow, shopName);
   // 食材算出
   const materialFlow = await calcMaterialConsumption(ingredientFlow, shopName);
   
   return { ingredientFlow, materialFlow };
 }
 
-async function calcIngredientConsumption(productFlow) {
+async function calcIngredientConsumption(productFlow, shopName) {
   let ingredientFlow = {};
 
   //  材料をpush
