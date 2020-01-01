@@ -43,16 +43,17 @@ async function handleWholesalerOperation(event) {
 }
 
 async function updateWholesaler(payload, shopName) {
-    payload.shop_name = shopName;
-    const params = {
-        TableName: wholesalerTableName,
-        Item: payload
-    };
-    try {
-        await docClient.put(params).promise();
-        console.log(`[SUCCESS] updated wholesaler data ${params}`);
-    }
-    catch (error) {
-        throw error;
-    }
+  payload.shop_name = shopName;
+  const params = {
+    TableName: wholesalerTableName,
+    Item: payload
+  };
+  try {
+    await docClient.put(params).promise();
+    console.log(`[SUCCESS] updated wholesaler data ${params}`);
+  }
+  catch (error) {
+    throw error;
+  }
+  
 }
