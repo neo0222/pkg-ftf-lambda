@@ -1,4 +1,5 @@
 const AWS = require('aws-sdk');
+const BigNumber = require('bignumber.js');
 const docClient = new AWS.DynamoDB.DocumentClient({
   region: 'ap-northeast-1'
 });
@@ -11,6 +12,8 @@ const materialTableName = 'MATERIAL_' + envSuffix;
 const sequenceTableName = 'SEQUENCE_' + envSuffix;
 const baseItemTableName = 'BASE_ITEM_' + envSuffix;
 const stockTableName = 'STOCK_' + envSuffix;
+const flowTableName = 'FLOW_' + envSuffix;
+
 
 let response = {
   statusCode: 200,
@@ -53,9 +56,9 @@ async function handleOperation(event) {
     // case 'register':
     //   await putProduct(event.payload);
     //   break;
-    // case 'update':
-    //   await updateProduct(event.payload);
-    //   break;
+    case 'update-by-daily-sales':
+      await updateByFlow(event, 'update-by-daily-sales');
+      break;
     case 'findAll':
       await getAllStocks(event);
       break;
@@ -165,7 +168,7 @@ async function registerMaterialStock(event, stock) {
   } else if (payload.stockType === '計量単位残数') {
     if (!material.measure.measure_per_order) return;
     stock.measure.measure_per_order = payload.amount;
-    console.log(material.measure.measure_per_order, payload.amount, convertNum(material.order.amount_per_order));
+    console.log(material.measure.measure_per_order, payload.amount, convertBigNumber(material.order.amount_per_order));
     stock.order.amount_per_order = calcStockAmount(material.measure.measure_per_order, payload.amount, material.order.amount_per_order);
     stock.count.count_per_order = calcStockAmount(material.measure.measure_per_order, payload.amount, material.count.count_per_order);
   }
@@ -197,10 +200,10 @@ async function registerIngredientStock(event, stock) {
   if (payload.stockType === '仕込み単位残数') {
     if (!ingredient.prepare.amount_per_prepare) return;
     stock.prepare.amount_per_prepare = payload.amount;
-    stock.measure.measure_per_order = calcStockAmount(ingredient.prepare.amount_per_prepare, payload.amount, ingredient.measure.measure_per_prepare);
+    stock.measure.measure_per_prepare = calcStockAmount(ingredient.prepare.amount_per_prepare, payload.amount, ingredient.measure.measure_per_prepare);
   } else if (payload.stockType === '計量単位残数') {
     if (!ingredient.measure.measure_per_prepare) return;
-    stock.measure.measure_per_order = payload.amount;
+    stock.measure.measure_per_prepare = payload.amount;
     stock.prepare.amount_per_prepare = calcStockAmount(ingredient.measure.measure_per_prepare, payload.amount, ingredient.prepare.amount_per_prepare);
   }
 
@@ -220,10 +223,157 @@ async function registerIngredientStock(event, stock) {
 */
 function calcStockAmount(basedAmount, stockAmountInput, targetBasedAmount) {
   if (convertNum(basedAmount) && convertNum(stockAmountInput) && convertNum(targetBasedAmount)) {
-    return (convertNum(stockAmountInput) * convertNum(targetBasedAmount) / convertNum(basedAmount)).toString();
+    return (convertBigNumber(stockAmountInput).times(convertBigNumber(targetBasedAmount)).dividedBy(convertBigNumber(basedAmount))).toFixed(2);
   } else {
     return undefined;
   }
+}
+
+/**
+ * 消費量に基づいて食材と食材料の在庫残数を減少させる。
+ * 
+ * @param  event 
+ */
+async function updateByFlow(event, operation) {
+  // パラメータ取得
+  const shopName = event.shopName;
+  const date = event.payload.date;
+  // オペレーションに応じてflowの種別を特定
+  const flowType = determineFlowType(operation);
+
+  const materialFlowData = await findFlowByFoodTypeAndDateAndFlowType(shopName, 'material', date, flowType);
+  const ingredientFlowData = await findFlowByFoodTypeAndDateAndFlowType(shopName, 'ingredient', date, flowType);
+
+  const maybeSpentMaterialIdList = Object.keys(materialFlowData);
+  const maybeSpentIngredientIdList = Object.keys(ingredientFlowData);
+
+  const promises = [];
+  for (const materialId of maybeSpentMaterialIdList) {
+    promises.push(updateStockByFoodTypeAndId(shopName, 'material', materialId, materialFlowData[materialId]))
+  }
+  for (const ingredientId of maybeSpentIngredientIdList) {
+    promises.push(updateStockByFoodTypeAndId(shopName, 'ingredient', ingredientId, ingredientFlowData[ingredientId]))
+  }
+  try {
+    await Promise.all(promises);
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+function determineFlowType(operation) {
+  if (operation === 'update-by-daily-sales') {
+    return 'daily_sales';
+  }
+}
+
+async function findFlowByFoodTypeAndDateAndFlowType(shopName, foodType, date, flowType, flowData) {
+  const params = {
+    TableName: flowTableName,
+    Key: {
+      'shop_name_food_type': shopName + ':' + foodType,
+      'date': date
+    }
+  };
+
+  try {
+    const result = await docClient.get(params).promise();
+    console.log(`[SUCCESS]retrieved flow data ${JSON.stringify(result.Item.flow_data)}`)
+    return result.Item.flow_data;
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function updateStockByFoodTypeAndId(shopName, foodType, id, flowData) {
+
+  const stockToBeUpdated = await findStockByFoodTypeAndId(shopName, foodType, id);
+
+  const updatedStock = createNewStock(foodType, flowData, stockToBeUpdated);
+
+  await putUpdatedStock(updatedStock);
+}
+
+async function findStockByFoodTypeAndId(shopName, foodType, id) {
+  const params = {
+    TableName: stockTableName,
+    Key: {
+      'shop_name_food_type': shopName + ':' + foodType,
+      'id': Number(id)
+    }
+  };
+
+  try {
+    const result = await docClient.get(params).promise();
+    return result.Item;
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+function createNewStock(foodType, flowData, stockToBeUpdated) {
+  if (foodType === 'material') {
+    return createNewMaterialStock(flowData, stockToBeUpdated);
+  } else if (foodType === 'ingredient') {
+    return createNewIngredientStock(flowData, stockToBeUpdated);
+  }
+}
+
+function createNewMaterialStock(flowData, stockToBeUpdated) {
+  // 消費前の残数
+  const measurePerOrder = convertBigNumber(stockToBeUpdated.measure.measure_per_order);
+  const countPerOrder = convertBigNumber(stockToBeUpdated.count.count_per_order);
+  const amountPerOrder = convertBigNumber(stockToBeUpdated.order.amount_per_order);
+
+  // 消費した減少差分(これは計量単位)
+  const descrement = convertBigNumber(flowData.daily_amount);
+  
+  if (measurePerOrder === 0) return stockToBeUpdated;
+
+  // 更新
+  stockToBeUpdated.measure.measure_per_order = (measurePerOrder.minus(descrement)).toFixed(2);
+  stockToBeUpdated.count.count_per_order   = (countPerOrder.minus(countPerOrder.dividedBy(measurePerOrder).times(descrement))).toFixed(2);
+  stockToBeUpdated.order.amount_per_order  = (amountPerOrder.minus(amountPerOrder.dividedBy(measurePerOrder).times(descrement))).toFixed(2);
+
+  console.log(stockToBeUpdated)
+  return stockToBeUpdated;
+}
+
+function createNewIngredientStock(flowData, stockToBeUpdated) {
+  console.log(JSON.stringify(stockToBeUpdated));
+  // 消費前の残数
+  const measurePerPrepare = convertBigNumber(stockToBeUpdated.measure.measure_per_prepare);
+  const amountPerPrepare = convertBigNumber(stockToBeUpdated.prepare.amount_per_prepare);
+
+  // 消費した減少差分(これは計量単位)
+  const descrement = convertBigNumber(flowData.daily_amount);
+
+  // 更新
+  stockToBeUpdated.measure.measure_per_prepare = (measurePerPrepare.minus(descrement)).toFixed(2);
+  stockToBeUpdated.prepare.amount_per_prepare  = (amountPerPrepare.minus(amountPerPrepare.dividedBy(measurePerPrepare).times(descrement))).toFixed(2);
+
+  console.log(stockToBeUpdated);
+  return stockToBeUpdated;
+}
+
+async function putUpdatedStock(updatedStock) {
+  const params = {
+    TableName: stockTableName,
+    Item: updatedStock
+  };
+  try {
+    await docClient.put(params).promise();
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+function convertBigNumber(object) {
+  return object ? new BigNumber(object) : new BigNumber(0);
 }
 
 function convertNum(object) {
