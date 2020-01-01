@@ -441,8 +441,9 @@ async function calcProductCostByNewIngredientCost(updatedIngredientList, product
   for (const productId of productIdListWithNoDuplication) {
     promises.push((async () => {
       const params = {
-        TableName: productTableName,
+        TableName: foodTableName,
         Key: {
+          'shop_name_food_type': shopName + ':product',
           'id': productId
         }
       };

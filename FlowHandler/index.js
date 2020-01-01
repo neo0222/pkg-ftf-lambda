@@ -197,14 +197,16 @@ async function obtainConfirmedProductFlow(date, shopName) {
 
 async function calcNewFoodConsumptionFlow(productFlow, shopName) {
   // 材料算出（非同期）
-  const ingredientFlow = await calcIngredientConsumption(productFlow);
+  const ingredientFlow = await calcIngredientConsumption(productFlow, shopName);
+  // 商品ベース算出
+  const baseItemFlow = await calcBaseItemConsumption(productFlow, shopName);
   // 食材算出
-  const materialFlow = await calcMaterialConsumption(ingredientFlow, shopName);
+  const materialFlow = await calcMaterialConsumption(baseItemFlow, shopName);
   
   return { ingredientFlow, materialFlow };
 }
 
-async function calcIngredientConsumption(productFlow) {
+async function calcIngredientConsumption(productFlow, shopName) {
   let ingredientFlow = {};
 
   //  材料をpush
@@ -337,11 +339,11 @@ async function calcAmountOfIngredientRequiredForBaseItem(baseItemFlow, baseItemI
         ingredientFlow[ingredient.id.toString()] = {};
       }
       ingredientFlow[ingredient.id.toString()].daily_amount = 
-        (convertNum(ingredientFlow[ingredient.id.toString()].daily_amount) + ( convertNum(ingredient.amount) * convertNum(dailyAmount))).toString();
+        (convertNum(ingredientFlow[ingredient.id.toString()].daily_amount) + ( convertNum(ingredient.amount) * convertNum(dailyAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
       ingredientFlow[ingredient.id.toString()].regular_amount = 
-        (convertNum(ingredientFlow[ingredient.id.toString()].regular_amount) + ( convertNum(ingredient.amount) * convertNum(regularAmount))).toString();
+        (convertNum(ingredientFlow[ingredient.id.toString()].regular_amount) + ( convertNum(ingredient.amount) * convertNum(regularAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
       ingredientFlow[ingredient.id.toString()].limited_amount = 
-        (convertNum(ingredientFlow[ingredient.id.toString()].limited_amount) + ( convertNum(ingredient.amount) * convertNum(limitedAmount))).toString();
+        (convertNum(ingredientFlow[ingredient.id.toString()].limited_amount) + ( convertNum(ingredient.amount) * convertNum(limitedAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
       }
     resolve();
   });
@@ -371,12 +373,69 @@ function getTableName(foodType) {
   return 'FOOD_' + envSuffix;
 }
 
-async function calcMaterialConsumption(ingredientFlow, shopName) {
+async function calcBaseItemConsumption(productFlow, shopName) {
+  let baseItemFlow = {};
+
+  //  base itemをpush
+  try {
+    await pushBaseItemRequiredForProduct(productFlow, baseItemFlow, shopName)
+  }
+  catch (error) {
+    throw error;
+  }
+  
+  console.log(`summary: the total amount of base items for sales were ${JSON.stringify(baseItemFlow)}`);
+
+  return baseItemFlow;
+}
+
+async function pushBaseItemRequiredForProduct(productFlow, baseItemFlow, shopName) {
+  const productIdList = obtainFoodIdList(productFlow);
+  const promises = [];
+  for (const productId of productIdList) {
+    promises.push(calcAmountOfBaseItemRequiredForProduct(productFlow, productId, baseItemFlow, shopName));
+  }
+
+  try {
+    await Promise.all(promises);
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function calcAmountOfBaseItemRequiredForProduct(productFlow, productId, baseItemFlow, shopName) {
+  return new Promise(async (resolve) => {
+    const dailyAmount = productFlow[productId].daily_amount;
+    const isRegular = productFlow[productId].menu_type === 'regular';
+    const product = await findByFoodByFoodTypeAndId('product', productId, shopName);
+    const requiredBaseItemList = product.required_base_item_list;
+    for (const baseItem of requiredBaseItemList) {
+      if (!baseItem.is_active) {
+        continue;
+      }
+      if (!baseItemFlow[baseItem.id.toString()]) {
+        baseItemFlow[baseItem.id.toString()] = {};
+      }
+      baseItemFlow[baseItem.id.toString()].daily_amount = 
+        (convertNum(baseItemFlow[baseItem.id.toString()].daily_amount) + ( convertNum(baseItem.amount) * convertNum(dailyAmount))).toString();
+      if (isRegular) {
+        baseItemFlow[baseItem.id.toString()].regular_amount = 
+        (convertNum(baseItemFlow[baseItem.id.toString()].regular_amount) + ( convertNum(baseItem.amount) * convertNum(dailyAmount))).toString();
+      } else {
+        baseItemFlow[baseItem.id.toString()].limited_amount = 
+          (convertNum(baseItemFlow[baseItem.id.toString()].limited_amount) + ( convertNum(baseItem.amount) * convertNum(dailyAmount))).toString();
+      }
+    }
+    resolve();
+  });
+}
+
+async function calcMaterialConsumption(baseItemFlow, shopName) {
   let materialFlow = {};
 
   //  材料をpush
   try {
-    await pushMaterialRequiredForIngredient(ingredientFlow, materialFlow, shopName)
+    await pushMaterialRequiredForBaseItem(baseItemFlow, materialFlow, shopName)
   }
   catch (error) {
     throw error;
@@ -387,11 +446,11 @@ async function calcMaterialConsumption(ingredientFlow, shopName) {
   return materialFlow;
 }
 
-async function pushMaterialRequiredForIngredient(ingredientFlow, materialFlow, shopName) {
-  const ingredientIdList = obtainFoodIdList(ingredientFlow);
+async function pushMaterialRequiredForBaseItem(baseItemFlow, materialFlow, shopName) {
+  const baseItemIdList = obtainFoodIdList(baseItemFlow);
   const promises = [];
-  for (const ingredientId of ingredientIdList) {
-    promises.push(calcAmountOfMaterialRequiredForProduct(ingredientFlow, ingredientId, materialFlow, shopName));
+  for (const baseItemId of baseItemIdList) {
+    promises.push(calcAmountOfMaterialRequiredForProduct(baseItemFlow, baseItemId, materialFlow, shopName));
   }
 
   try {
@@ -401,16 +460,16 @@ async function pushMaterialRequiredForIngredient(ingredientFlow, materialFlow, s
   }
 }
 
-async function calcAmountOfMaterialRequiredForProduct(ingredientFlow, ingredientId, materialFlow, shopName) {
+async function calcAmountOfMaterialRequiredForProduct(baseItemFlow, baseItemId, materialFlow, shopName) {
   return new Promise(async (resolve) => {
-    const dailyAmount = ingredientFlow[ingredientId].daily_amount;
-    const regularAmount = ingredientFlow[ingredientId].regular_amount;
-    const limitedAmount = ingredientFlow[ingredientId].limited_amount;
-    const ingredient = await findByFoodByFoodTypeAndId('ingredient', ingredientId, shopName);
-    const requiredMaterialList = ingredient.required_material_list;
+    const dailyAmount = baseItemFlow[baseItemId].daily_amount;
+    const regularAmount = baseItemFlow[baseItemId].regular_amount;
+    const limitedAmount = baseItemFlow[baseItemId].limited_amount;
+    const baseItem = await findByFoodByFoodTypeAndId('base-item', baseItemId, shopName);
+    const requiredMaterialList = baseItem.required_material_list;
     for (const material of requiredMaterialList) {
-      if (ingredient.measure.measure_per_prepare === '0' || !ingredient.measure.measure_per_prepare) {
-        throw new Error(`ingredient (id=${ingredientId}) has no measure per prepare. please register measure per prepare.`);
+      if (baseItem.measure.measure_per_prepare === '0' || !baseItem.measure.measure_per_prepare) {
+        throw new Error(`baseItem (id=${baseItemId}) has no measure per prepare. please register measure per prepare.`);
       }
       if (!material.is_active) {
         continue;
@@ -419,11 +478,11 @@ async function calcAmountOfMaterialRequiredForProduct(ingredientFlow, ingredient
         materialFlow[material.id.toString()] = {};
       }
       materialFlow[material.id.toString()].daily_amount = 
-        (convertNum(materialFlow[material.id.toString()].daily_amount) + ( convertNum(material.amount) * convertNum(dailyAmount) / convertNum(ingredient.measure.measure_per_prepare))).toString();
+        (convertNum(materialFlow[material.id.toString()].daily_amount) + ( convertNum(material.amount) * convertNum(dailyAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
       materialFlow[material.id.toString()].regular_amount = 
-        (convertNum(materialFlow[material.id.toString()].regular_amount) + ( convertNum(material.amount) * convertNum(regularAmount) / convertNum(ingredient.measure.measure_per_prepare))).toString();
+        (convertNum(materialFlow[material.id.toString()].regular_amount) + ( convertNum(material.amount) * convertNum(regularAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
       materialFlow[material.id.toString()].limited_amount = 
-        (convertNum(materialFlow[material.id.toString()].limited_amount) + ( convertNum(material.amount) * convertNum(limitedAmount) / convertNum(ingredient.measure.measure_per_prepare))).toString();
+        (convertNum(materialFlow[material.id.toString()].limited_amount) + ( convertNum(material.amount) * convertNum(limitedAmount) / convertNum(baseItem.measure.measure_per_prepare))).toString();
     }
     resolve();
   });
