@@ -30,6 +30,11 @@ zip -r Deploy.zip ./
 mkdir -p ../_Deploy/${DIRECTORY_NAME}/MaterialRegisterer
 mv Deploy.zip ../_Deploy/${DIRECTORY_NAME}/MaterialRegisterer/Deploy.zip
 
+cd ../OrderHandler
+zip -r Deploy.zip ./
+mkdir -p ../_Deploy/${DIRECTORY_NAME}/OrderHandler
+mv Deploy.zip ../_Deploy/${DIRECTORY_NAME}/OrderHandler/Deploy.zip
+
 cd ../ProductRegisterer
 zip -r Deploy.zip ./
 mkdir -p ../_Deploy/${DIRECTORY_NAME}/ProductRegisterer
