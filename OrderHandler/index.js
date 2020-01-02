@@ -53,11 +53,13 @@ async function createOrder(payload, shopName) {
   const averageSalesList = await calcAverageSales(targetWholesalerMap, shopName);
   // 消費量平均算出
   const averageConsumptionList = await calcAverageConsumption(averageSalesList, shopName);
-  console.log(JSON.stringify(averageConsumptionList))
-  // 売上平均算出
+  console.log(JSON.stringify(averageConsumptionList));
+  // 相対値をclientから渡す実装とするため、売上平均算出は行わない。
+  // // 売上平均算出
   // const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
-  // // 係数かける
-  // const adjustedAverageConsumption = await adjustedAverageConsumption(averageConsumption);
+  // 係数かける
+  const adjustedAverageConsumption = adjusteAverageConsumption(averageConsumptionList, payload.sales_factor);
+  console.log(JSON.stringify(adjustedAverageConsumption))
   // // 発注量算出
   // const order = await calcOrderAmount(adjustedAverageConsumption);
 
@@ -219,8 +221,7 @@ async function retrieveProductFlow(dayList, shopName) {
         }
       },
       ScanIndexForward: false,
-      Limit: 4,
-      ConsistentRead: true
+      Limit: 4
     };
     try {
       const result = await docClient.query(params).promise();
@@ -423,6 +424,17 @@ async function calcMaterialFromIngredient(ingredient, shopName, materialMap) {
     }
   }
   return new Promise((resolve) => resolve());
+}
+
+function adjusteAverageConsumption(averageConsumptionList, salesFactor) {
+  return averageConsumptionList
+    .map(averageConsumption => {
+      const idList = Object.keys(averageConsumption.averageMaterialMap);
+      for (const id of idList) {
+        averageConsumption['averageMaterialMap'][id] = convertBigNumber(averageConsumption['averageMaterialMap'][id]).times(convertBigNumber(salesFactor)).toFixed(2);
+      }
+      return averageConsumption;
+    })
 }
 
 async function findFoodByShopNameAndFoodTypeAndId(shopName, foodType, id) {
