@@ -9,6 +9,7 @@ const envSuffix = process.env['ENVIRONMENT'];
 const wholesalerTableName = 'WHOLESALER_' + envSuffix;
 const businessDateTableName = 'BUSINESS_DATE_' + envSuffix;
 const flowTableName = 'FLOW_' + envSuffix;
+const foodTableName = 'FOOD_' + envSuffix;
 
 exports.handler = async (event, context) => {
   
@@ -51,15 +52,16 @@ async function createOrder(payload, shopName) {
   // 提供数平均算出
   const averageSalesList = await calcAverageSales(targetWholesalerMap, shopName);
   // 消費量平均算出
-  const averageConsumption = await calcAverageConsumption(averageSalesList, shopName);
+  const averageConsumptionList = await calcAverageConsumption(averageSalesList, shopName);
+  console.log(JSON.stringify(averageConsumptionList))
   // 売上平均算出
-  const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
-  // 係数かける
-  const adjustedAverageConsumption = await adjustedAverageConsumption(averageConsumption);
-  // 発注量算出
-  const order = await calcOrderAmount(adjustedAverageConsumption);
+  // const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
+  // // 係数かける
+  // const adjustedAverageConsumption = await adjustedAverageConsumption(averageConsumption);
+  // // 発注量算出
+  // const order = await calcOrderAmount(adjustedAverageConsumption);
 
-  return order;
+  // return order;
 }
 
 async function determineTargetWholesaler(date, shopName) {
@@ -217,7 +219,8 @@ async function retrieveProductFlow(dayList, shopName) {
         }
       },
       ScanIndexForward: false,
-      Limit: 4
+      Limit: 4,
+      ConsistentRead: true
     };
     try {
       const result = await docClient.query(params).promise();
@@ -258,6 +261,190 @@ function calcAverageSalesForDay(day, productFlowList) {
   }
   return averageSalesMap;
 }
+
+async function calcAverageConsumption(averageSalesList, shopName) {
+  // 各曜日の平均消費量算出
+  const promises = [];
+  for (const averageSales of averageSalesList) {
+    promises.push(calcConsumptionForDay(averageSales, shopName));
+  }
+  try {
+    const consumptionList = await Promise.all(promises);
+    return new Promise((resolve) => resolve(consumptionList))
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function calcConsumptionForDay(averageSales, shopName) {
+  // パラメータ取得
+  const day = averageSales.day;
+  const averageSalesMap = averageSales.averageSalesMap;
+
+  // 各商品ごとに食材消費量算出し、mapにまとめる
+  const productIdList = Object.keys(averageSalesMap);
+  let materialMap = {}
+  const promises = [];
+  for (const productId of productIdList) {
+    promises.push(calcMaterialForProduct(productId, averageSalesMap[productId], shopName, materialMap));
+  }
+
+  try {
+    await Promise.all(promises);
+    return new Promise((resolve) => {
+      resolve({
+        day: day,
+        averageMaterialMap: materialMap
+      })
+    })
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function calcMaterialForProduct(productId, averageSales, shopName, materialMap) {
+  // product    -> base-item  + ingredient
+  const { baseItemList, ingredientForProductList } =
+    await calcBaseItemAndIngredientFromProduct(productId, averageSales, shopName);
+
+  // base-item  -> ingredient + material
+  // ここを非同期にしようとするとなぜかmaterialMapへのpushがうまくいかないので同期的に処理する
+  const ingredientFromBaseItemList =
+    await calcIngredientAndMaterialFromBaseItemList(baseItemList, shopName, materialMap)
+  // ingredient -> material
+  await calcMaterialFromIngredientList(ingredientForProductList, shopName, materialMap)
+
+  // (base-item ->) ingredient -> material
+  await calcMaterialFromIngredientList(ingredientFromBaseItemList, shopName, materialMap);
+}
+
+async function calcBaseItemAndIngredientFromProduct(productId, averageSales, shopName) {
+  const product = await findFoodByShopNameAndFoodTypeAndId(shopName, 'product', productId);
+  return {
+    baseItemList:
+      product.required_base_item_list
+        .map(baseItem => {
+          return {
+            id: baseItem.id,
+            name: baseItem.name,
+            amount: convertBigNumber(baseItem.amount).times(convertBigNumber(averageSales)).toFixed(2)
+          }
+        }),
+    ingredientForProductList:
+      product.required_ingredient_list
+        .map(ingredient => {
+          return {
+            id: ingredient.id,
+            name: ingredient.name,
+            amount: convertBigNumber(ingredient.amount).times(convertBigNumber(averageSales)).toFixed(2)
+          }
+        })
+  };
+}
+
+async function calcIngredientAndMaterialFromBaseItemList(baseItemList, shopName, materialMap) {
+  const ingredientList = [];
+  const promises = [];
+  for (const baseItem of baseItemList) {
+    promises.push(calcIngredientAndMaterialFromBaseItem(baseItem, shopName, materialMap, ingredientList));
+  }
+
+  try {
+    const results = await Promise.all(promises);
+    return new Promise((resolve) => resolve(results[0] ? results[0] : []));
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function calcIngredientAndMaterialFromBaseItem(baseItem, shopName, materialMap, ingredientList) {
+  const baseItemRaw = await findFoodByShopNameAndFoodTypeAndId(shopName, 'base-item', baseItem.id);
+
+  const requiredIngredientList = baseItemRaw.required_ingredient_list;
+  const requiredMaterialList = baseItemRaw.required_material_list;
+  const measurePerPrepare = convertBigNumber(baseItemRaw.measure.measure_per_prepare);
+
+  if (measurePerPrepare.isEqualTo(convertBigNumber(0))) throw new Error(`base item (id = ${baseItem.id}) has no mesure per prepare. please try again after registration`)
+
+  for (const ingredient of requiredIngredientList) {
+    if (!ingredientList.some(target => target.id !== ingredient.id)) {
+      ingredientList.push({
+        id: ingredient.id,
+        name: ingredient.name,
+        amount: convertBigNumber(ingredient.amount).times(convertBigNumber(baseItem.amount)).dividedBy(measurePerPrepare).toFixed(2)
+      });
+    } else {
+      const targetIndex = ingredientList.findIndex(target => target.id === ingredient.id)
+      ingredientList[targetIndex].amount = convertBigNumber(ingredientList[targetIndex].amount).plus(convertBigNumber(ingredient.amount).times(convertBigNumber(baseItem.amount)).dividedBy(measurePerPrepare)).toFixed(2)
+    }
+    
+  }
+  for (const material of requiredMaterialList){
+    if (!materialMap[material.id]) {
+      materialMap[material.id] = convertBigNumber(material.amount).times(convertBigNumber(baseItem.amount)).dividedBy(measurePerPrepare).toFixed(2);
+    } else {
+      materialMap[material.id] = convertBigNumber(materialMap[material.id]).plus(convertBigNumber(material.amount).times(convertBigNumber(baseItem.amount)).dividedBy(measurePerPrepare)).toFixed(2);
+    }
+  }
+  return new Promise((resolve) => resolve(ingredientList));
+}
+
+async function calcMaterialFromIngredientList(ingredientForProductList, shopName, materialMap) {
+  const promises = [];
+  for (const ingredient of ingredientForProductList) {
+    promises.push(calcMaterialFromIngredient(ingredient, shopName, materialMap));
+  }
+
+  try {
+    await Promise.all(promises);
+    return new Promise((resolve) => resolve());
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function calcMaterialFromIngredient(ingredient, shopName, materialMap) {
+  const ingredientRaw = await findFoodByShopNameAndFoodTypeAndId(shopName, 'ingredient', ingredient.id);
+
+  const requiredMaterialList = ingredientRaw.required_material_list;
+  const measurePerPrepare = convertBigNumber(ingredientRaw.measure.measure_per_prepare);
+
+  if (measurePerPrepare.isEqualTo(convertBigNumber(0))) throw new Error(`ingredient (id = ${ingredient.id}) has no mesure per prepare. please try again after registration`)
+
+  for (const material of requiredMaterialList){
+    if (!materialMap[material.id]) {
+      materialMap[material.id] = convertBigNumber(material.amount).times(convertBigNumber(ingredient.amount)).dividedBy(measurePerPrepare).toFixed(2);
+    } else {
+      materialMap[material.id] = convertBigNumber(materialMap[material.id]).plus(convertBigNumber(material.amount).times(convertBigNumber(ingredient.amount)).dividedBy(measurePerPrepare)).toFixed(2);
+    }
+  }
+  return new Promise((resolve) => resolve());
+}
+
+async function findFoodByShopNameAndFoodTypeAndId(shopName, foodType, id) {
+  const params = {
+    TableName: foodTableName,
+    Key: {
+      'shop_name_food_type': shopName + ':' + foodType,
+      'id': Number(id)
+    },
+    ConsistentRead: true
+  };
+
+  try {
+    const result = await docClient.get(params).promise();
+    return result.Item;
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+
 
 function getDayFromISO8601(date) {
   const dateUTC = new Date(date);
