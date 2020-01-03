@@ -113,7 +113,7 @@ async function retrieveUpcomingBusinessDate(shopName) {
   console.log(todayFormatted)
   const params = {
     TableName: businessDateTableName,
-    KeyConditionExpression: "#shopName = :shopName and #date > :date",
+    KeyConditionExpression: "#shopName = :shopName and #date >= :date",
     ExpressionAttributeNames:{
       "#shopName": "shop_name",
       "#date": "date"
