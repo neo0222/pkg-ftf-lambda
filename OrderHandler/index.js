@@ -10,6 +10,8 @@ const wholesalerTableName = 'WHOLESALER_' + envSuffix;
 const businessDateTableName = 'BUSINESS_DATE_' + envSuffix;
 const flowTableName = 'FLOW_' + envSuffix;
 const foodTableName = 'FOOD_' + envSuffix;
+const stockTableName = 'STOCK_' + envSuffix;
+const orderTableName = 'ORDER_' + envSuffix;
 
 exports.handler = async (event, context) => {
   
@@ -53,17 +55,27 @@ async function createOrder(payload, shopName) {
   const averageSalesList = await calcAverageSales(targetWholesalerMap, shopName);
   // 消費量平均算出
   const averageConsumptionList = await calcAverageConsumption(averageSalesList, shopName);
-  console.log(JSON.stringify(averageConsumptionList));
   // 相対値をclientから渡す実装とするため、売上平均算出は行わない。
   // // 売上平均算出
   // const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
   // 係数かける
   const adjustedAverageConsumptionList = adjusteAverageConsumption(averageConsumptionList, payload.sales_factor);
-  console.log(JSON.stringify(adjustedAverageConsumptionList))
   // 発注量算出
-  const order = await calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionList, shopName);
+  const { targetDateMap, suggestedOrderList} = await calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionList, shopName);
 
   // return order;
+  await putOrder({
+    shop_name: shopName,
+    date: payload.date,
+    suggested_order_list: suggestedOrderList,
+    sales_factor: payload.sales_factor,
+    target_wholesaler_map: targetWholesalerMap,
+    average_sales_list: averageSalesList,
+    average_consumption_list: averageConsumptionList,
+    adjusted_consumption_list: adjustedAverageConsumptionList,
+    target_date_Map: targetDateMap,
+    execution_date: new Date().toISOString()
+  })
 }
 
 async function determineTargetWholesaler(date, shopName) {
@@ -445,6 +457,25 @@ function adjusteAverageConsumption(averageConsumptionList, salesFactor) {
 async function findFoodByShopNameAndFoodTypeAndId(shopName, foodType, id) {
   const params = {
     TableName: foodTableName,
+    Key: {
+      'shop_name_food_type': shopName + ':' + foodType,
+      'id': Number(id)
+    },
+    ConsistentRead: true
+  };
+
+  try {
+    const result = await docClient.get(params).promise();
+    return result.Item;
+  }
+  catch (error) {
+    throw error;
+  }
+}
+
+async function findStockByShopNameAndFoodTypeAndId(shopName, foodType, id) {
+  const params = {
+    TableName: stockTableName,
     Key: {
       'shop_name_food_type': shopName + ':' + foodType,
       'id': Number(id)
