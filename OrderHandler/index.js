@@ -562,7 +562,8 @@ function createTargetDateMap(targetWholesalerMap) {
       if (targetWholesalerMap[date]["targetWholesalerList"].some(wholesaler => wholesaler.id === id)) {
         targetDateMap[id].push({
           date: date,
-          day: targetWholesalerMap[date].day
+          day: targetWholesalerMap[date].day,
+          wholesalerName: targetWholesalerMap[dateList[0]]["targetWholesalerList"].find(wholesaler => wholesaler.id === id).name
         })
       } else {
         break;
@@ -594,6 +595,8 @@ function calcOrderInfo(targetDateList, averageConsumptionList, material, stock, 
     return {
       id: material.id,
       name: material.name,
+      wholesaler_id: material.wholesaler_id,
+      wholesaler_name: targetDateList[0].wholesalerName,
       measure: {
         estimated_amount: estimatedAmount,
         measure_amount: measureAmount,
