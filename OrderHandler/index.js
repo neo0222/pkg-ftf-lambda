@@ -53,9 +53,11 @@ async function createOrder(payload, shopName) {
   const targetWholesalerMap = await determineTargetWholesaler(payload.date, shopName)
   // 提供数平均算出
   const averageSalesList = await calcAverageSales(targetWholesalerMap, shopName);
+  // 期間限定メニューの予想提供数をmerge
+  mergeSalesList(averageSalesList, payload.estimated_limited_product_sales_map);
+  
   // 消費量平均算出
   const averageConsumptionList = await calcAverageConsumption(averageSalesList, shopName);
-  console.log(JSON.stringify(averageConsumptionList))
   // 相対値をclientから渡す実装とするため、売上平均算出は行わない。
   // // 売上平均算出
   // const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
@@ -444,6 +446,16 @@ async function calcMaterialFromIngredient(ingredient, shopName, materialMap) {
     }
   }
   return new Promise((resolve) => resolve());
+}
+
+function mergeSalesList(averageSalesList, estimatedLimitedProductSalesMap) {
+  for (const averageSales of averageSalesList) {
+    if ([1, 2, 3, 4, 5].includes(averageSales.day)) {
+      Object.assign(averageSales.averageSalesMap, estimatedLimitedProductSalesMap['weekday']);
+    } else {
+      Object.assign(averageSales.averageSalesMap, estimatedLimitedProductSalesMap['holiday']);
+    }
+  }
 }
 
 function adjusteAverageConsumption(averageConsumptionList, salesFactor) {
