@@ -55,13 +55,17 @@ async function createOrder(payload, shopName) {
   const averageSalesList = await calcAverageSales(targetWholesalerMap, shopName);
   // 消費量平均算出
   const averageConsumptionList = await calcAverageConsumption(averageSalesList, shopName);
+  console.log(JSON.stringify(averageConsumptionList))
   // 相対値をclientから渡す実装とするため、売上平均算出は行わない。
   // // 売上平均算出
   // const averageSalesPrice = await calcAverageSalesPrice(averageSalesList);
+  // 係数は曜日ではなく営業日ごとにかけるのでこの操作は不要
   // 係数かける
-  const adjustedAverageConsumptionList = adjusteAverageConsumption(averageConsumptionList, payload.sales_factor);
+  // const adjustedAverageConsumptionList = adjusteAverageConsumption(averageConsumptionList, payload.sales_factor);
+  // console.log(JSON.stringify(adjustedAverageConsumptionList))
   // 発注量算出
-  const { targetDateMap, suggestedOrderList} = await calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionList, shopName);
+  const { targetDateMap, suggestedOrderList} = await calcOrderAmount(targetWholesalerMap, averageConsumptionList, shopName, payload.sales_factor_map);
+  console.log(JSON.stringify(averageConsumptionList))
 
   // return order;
   await putOrder({
@@ -72,7 +76,6 @@ async function createOrder(payload, shopName) {
     target_wholesaler_map: targetWholesalerMap,
     average_sales_list: averageSalesList,
     average_consumption_list: averageConsumptionList,
-    adjusted_consumption_list: adjustedAverageConsumptionList,
     target_date_Map: targetDateMap,
     execution_date: new Date().toISOString()
   })
@@ -492,12 +495,12 @@ async function findStockByShopNameAndFoodTypeAndId(shopName, foodType, id) {
   }
 }
 
-async function calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionList, shopName) {
+async function calcOrderAmount(targetWholesalerMap, averageConsumptionList, shopName, salesFactorMap) {
   // 発注先idがKey、対象日がValueのMapを取得
   const targetDateMap = createTargetDateMap(targetWholesalerMap);
   // 発注対象の全食材のidのList取得
   const materialIdList =
-    adjustedAverageConsumptionList
+    averageConsumptionList
       .map(aac => {
         return Object.keys(aac.averageMaterialMap);
       })
@@ -515,7 +518,7 @@ async function calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionLi
       const stock = await findStockByShopNameAndFoodTypeAndId(shopName, 'material', materialId);
       // 何日分発注すべきか算出
       // 対象日分の必要量算出
-      const orderInfo = calcOrderInfo(targetDateMap[material.wholesaler_id], adjustedAverageConsumptionList, material, stock);
+      const orderInfo = calcOrderInfo(targetDateMap[material.wholesaler_id], averageConsumptionList, material, stock, salesFactorMap);
       // push
       return new Promise((resolve) => {
         resolve(orderInfo)
@@ -556,15 +559,18 @@ function createTargetDateMap(targetWholesalerMap) {
   return targetDateMap;
 }
 
-function calcOrderInfo(targetDateList, adjustedAverageConsumptionList, material, stock) {
+function calcOrderInfo(targetDateList, averageConsumptionList, material, stock, salesFactorMap) {
   if (!targetDateList) return;
   const estimatedAmount = 
     !targetDateList
       ? 0
       : targetDateList
-          .map(date => date.day)
-          .map(day => {
-            return convertBigNumber(adjustedAverageConsumptionList.find(aac => aac.day === day)['averageMaterialMap'][material.id]);
+          .map(date => {
+            return convertBigNumber(
+              averageConsumptionList
+                .find(aac => aac.day === date.day)['averageMaterialMap'][material.id]
+              )
+              .times(convertBigNumber(salesFactorMap[date.date]));
           })
           .reduce((acc, cur) => {
             return acc.plus(cur);
