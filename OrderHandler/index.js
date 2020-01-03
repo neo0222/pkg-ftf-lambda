@@ -326,6 +326,7 @@ async function calcBaseItemAndIngredientFromProduct(productId, averageSales, sho
   return {
     baseItemList:
       product.required_base_item_list
+        .filter(baseItem => baseItem.is_active)
         .map(baseItem => {
           return {
             id: baseItem.id,
@@ -335,6 +336,7 @@ async function calcBaseItemAndIngredientFromProduct(productId, averageSales, sho
         }),
     ingredientForProductList:
       product.required_ingredient_list
+        .filter(ingredient => ingredient.is_active)
         .map(ingredient => {
           return {
             id: ingredient.id,
@@ -371,6 +373,7 @@ async function calcIngredientAndMaterialFromBaseItem(baseItem, shopName, materia
   if (measurePerPrepare.isEqualTo(convertBigNumber(0))) throw new Error(`base item (id = ${baseItem.id}) has no mesure per prepare. please try again after registration`)
 
   for (const ingredient of requiredIngredientList) {
+    if (!ingredient.is_active) continue;
     if (!ingredientList.some(target => target.id !== ingredient.id)) {
       ingredientList.push({
         id: ingredient.id,
@@ -384,6 +387,7 @@ async function calcIngredientAndMaterialFromBaseItem(baseItem, shopName, materia
     
   }
   for (const material of requiredMaterialList){
+    if (!material.is_active) continue;
     if (!materialMap[material.id]) {
       materialMap[material.id] = convertBigNumber(material.amount).times(convertBigNumber(baseItem.amount)).dividedBy(measurePerPrepare).toFixed(2);
     } else {
@@ -417,6 +421,7 @@ async function calcMaterialFromIngredient(ingredient, shopName, materialMap) {
   if (measurePerPrepare.isEqualTo(convertBigNumber(0))) throw new Error(`ingredient (id = ${ingredient.id}) has no mesure per prepare. please try again after registration`)
 
   for (const material of requiredMaterialList){
+    if (!material.is_active) continue;
     if (!materialMap[material.id]) {
       materialMap[material.id] = convertBigNumber(material.amount).times(convertBigNumber(ingredient.amount)).dividedBy(measurePerPrepare).toFixed(2);
     } else {
