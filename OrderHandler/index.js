@@ -519,10 +519,12 @@ async function calcOrderAmount(targetWholesalerMap, averageConsumptionList, shop
       .reduce((acc, cur) => {
         return acc.concat(cur);
       }, []);
-  
+  // 対象日ごとの重複を排除
+  const materialIdListWithNoDuplication = Array.from(new Set(materialIdList));
+
   const promises = [];
   // 各発注対象の食材に対して
-  for (const materialId of materialIdList) {
+  for (const materialId of materialIdListWithNoDuplication) {
     promises.push((async () => {
       // 食材データ取得
       const material = await findFoodByShopNameAndFoodTypeAndId(shopName, 'material', materialId);  
