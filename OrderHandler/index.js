@@ -33,17 +33,17 @@ async function main(event, context) {
           "Access-Control-Allow-Origin": '*'
       }
   };
-  await handleOrderOperation(event);
+  await handleOrderOperation(event, response);
   return response;
 }
 
-async function handleOrderOperation(event) {
+async function handleOrderOperation(event, response) {
   switch (event.operation) {
     case 'create':
       await createOrder(event.payload, event.shopName);
       break;
-    case 'register-all':
-      await putAllMaterial(foodTableName, event.materialList, event.shopName);
+    case 'retrieve-target-business-date':
+      await retrieveTargetBusinessDate(event.payload, event.shopName, response);
       break;
   }
 }
@@ -669,6 +669,23 @@ async function putOrder(item) {
   catch (error) {
     throw error;
   }
+}
+
+async function retrieveTargetBusinessDate(payload, shopName, response) {
+  // 発注対象の年月日と発注先を特定する。
+  const targetWholesalerMap = await determineTargetWholesaler(payload.date, shopName)
+  // 発注先idがKey、対象日がValueのMapを取得
+  const targetDateMap = createTargetDateMap(targetWholesalerMap);
+  console.log(JSON.stringify(targetWholesalerMap));
+  console.log(JSON.stringify(targetDateMap));
+  response.body.targetWholesalerMap = targetWholesalerMap;
+  response.body.targetDateMap = targetDateMap;
+  await putOrder({
+    shop_name: shopName,
+    date: payload.date,
+    target_wholesaler_map: targetWholesalerMap,
+    target_date_map: targetDateMap
+  })
 }
 
 function getDayFromISO8601(date) {
