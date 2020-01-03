@@ -79,7 +79,8 @@ async function createOrder(payload, shopName) {
     average_sales_list: averageSalesList,
     average_consumption_list: averageConsumptionList,
     target_date_Map: targetDateMap,
-    execution_date: new Date().toISOString()
+    execution_date: new Date().toISOString(),
+    status: 'suggested'
   })
 }
 
@@ -688,15 +689,14 @@ async function retrieveTargetBusinessDate(payload, shopName, response) {
   const targetWholesalerMap = await determineTargetWholesaler(payload.date, shopName)
   // 発注先idがKey、対象日がValueのMapを取得
   const targetDateMap = createTargetDateMap(targetWholesalerMap);
-  console.log(JSON.stringify(targetWholesalerMap));
-  console.log(JSON.stringify(targetDateMap));
   response.body.targetWholesalerMap = targetWholesalerMap;
   response.body.targetDateMap = targetDateMap;
   await putOrder({
     shop_name: shopName,
     date: payload.date,
     target_wholesaler_map: targetWholesalerMap,
-    target_date_map: targetDateMap
+    target_date_map: targetDateMap,
+    order_status: 'started'
   })
 }
 
