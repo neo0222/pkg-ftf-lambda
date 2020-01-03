@@ -310,7 +310,7 @@ async function calcBaseItemCostByNewIngredientCost(updatedIngredientList, baseIt
         const params = {
           TableName: foodTableName,
           Key: {
-            'shop_name_food_type' : shopName + 'base-item',
+            'shop_name_food_type' : shopName + ':base-item',
             'id': baseItemId
           }
         };

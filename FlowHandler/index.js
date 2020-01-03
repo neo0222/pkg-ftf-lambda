@@ -139,6 +139,7 @@ async function confirmDailyAmount(payload, shopName) {
     Item: {
       shop_name_food_type: shopName + ':product',
       date: payload.date,
+      day: getDayFromISO8601(payload.date),
       flow_data: flowData,
       daily_amount_status: 'confirmed'
     }
@@ -522,4 +523,9 @@ function convertNum(object) {
 
 function optional(object) {
   return object ? object : undefined;
+}
+
+function getDayFromISO8601(date) {
+  const dateUTC = new Date(date);
+  return new Date(dateUTC.setHours(dateUTC.getHours() + 9)).getDay();
 }
