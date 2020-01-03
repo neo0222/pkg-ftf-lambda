@@ -67,7 +67,6 @@ async function createOrder(payload, shopName) {
   // console.log(JSON.stringify(adjustedAverageConsumptionList))
   // 発注量算出
   const { targetDateMap, suggestedOrderList} = await calcOrderAmount(targetWholesalerMap, averageConsumptionList, shopName, payload.sales_factor_map);
-  console.log(JSON.stringify(averageConsumptionList))
 
   // return order;
   await putOrder({
