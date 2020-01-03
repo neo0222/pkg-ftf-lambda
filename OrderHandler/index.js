@@ -479,20 +479,23 @@ async function calcOrderAmount(targetWholesalerMap, adjustedAverageConsumptionLi
   for (const materialId of materialIdList) {
     promises.push((async () => {
       // 食材データ取得
-      const material = await findFoodByShopNameAndFoodTypeAndId(shopName, 'material', materialId);
+      const material = await findFoodByShopNameAndFoodTypeAndId(shopName, 'material', materialId);  
+      // 在庫残数データ取得
+      const stock = await findStockByShopNameAndFoodTypeAndId(shopName, 'material', materialId);
       // 何日分発注すべきか算出
       // 対象日分の必要量算出
-      const orderInfo = calcOrderInfo(targetDateMap[material.wholesaler_id], adjustedAverageConsumptionList, material);
+      const orderInfo = calcOrderInfo(targetDateMap[material.wholesaler_id], adjustedAverageConsumptionList, material, stock);
       // push
-      return new Promise((resolve) => resolve(orderInfo))
+      return new Promise((resolve) => {
+        resolve(orderInfo)
+      })
     })());
   }
 
   try {
      let suggestedOrderList = await Promise.all(promises);
      suggestedOrderList = suggestedOrderList.filter(so => so);
-     console.log(JSON.stringify(suggestedOrderList))
-     return new Promise((resolve) => resolve(suggestedOrderList));
+     return new Promise((resolve) => resolve({targetDateMap, suggestedOrderList}));
   }
   catch (error) {
     throw error;
@@ -522,9 +525,9 @@ function createTargetDateMap(targetWholesalerMap) {
   return targetDateMap;
 }
 
-function calcOrderInfo(targetDateList, adjustedAverageConsumptionList, material) {
+function calcOrderInfo(targetDateList, adjustedAverageConsumptionList, material, stock) {
   if (!targetDateList) return;
-  const measureAmount = 
+  const estimatedAmount = 
     !targetDateList
       ? 0
       : targetDateList
@@ -536,23 +539,99 @@ function calcOrderInfo(targetDateList, adjustedAverageConsumptionList, material)
             return acc.plus(cur);
           }, new BigNumber(0))
           .toFixed(2);
-  const orderAmountRate = (convertBigNumber(measureAmount).dividedBy(convertBigNumber(material.measure.measure_per_order)).plus(new BigNumber(1))).toFixed(0);
+  const measureAmount = calcMeasureAmountToBeOrdered(estimatedAmount, stock, material);
+  if (measureAmount === '0.00' || measureAmount === '0') {
+    return {
+      id: material.id,
+      name: material.name,
+      measure: {
+        estimated_amount: estimatedAmount,
+        measure_amount: measureAmount,
+        measure_unit: material.measure.measure_unit,
+        stock_amount: stock.measure.measure_per_order,
+        minimum_amount: material.minimum.minimum_amount
+      },
+      order: {
+        order_amount: '0.00',
+        order_unit: material.order.order_unit
+      },
+      needs_order: false
+    };
+  }
+  const orderAmountRate =
+    // 必要比率を小数で算出
+    (convertBigNumber(measureAmount).dividedBy(convertBigNumber(material.measure.measure_per_order)))
+      // modで端数を算出し、引く
+      .minus(convertBigNumber(measureAmount).dividedBy(convertBigNumber(material.measure.measure_per_order)).mod(1))
+      // 1繰り上げ
+      .plus(1)
+      .toFixed(4);
   const orderAmount =
     !targetDateList
       ? 0
-      : convertBigNumber(orderAmountRate).times(convertBigNumber(material.order.amount_per_order));
+      : convertBigNumber(orderAmountRate).times(convertBigNumber(material.order.amount_per_order)).toFixed(2);
   return {
     id: material.id,
     name: material.name,
     measure: {
+      estimated_amount: estimatedAmount,
       measure_amount: measureAmount,
-      measure_unit: material.measure.measure_unit
+      measure_unit: material.measure.measure_unit,
+      stock_amount: stock.measure.measure_per_order,
+      minimum_amount: material.minimum.minimum_amount
     },
     order: {
       order_amount: orderAmount,
       order_unit: material.order.order_unit
-    }
+    },
+    needs_order: true
   };
+}
+
+function calcMeasureAmountToBeOrdered(estimatedAmount, stock, material) {
+  const estimatedAmountBN = convertBigNumber(estimatedAmount);
+  const stockAmountBN = convertBigNumber(stock.measure.measure_per_order);
+  const minimumAmountBN = convertMinimumAmountToMeasure(material);
+
+  if (stockAmountBN.minus(estimatedAmountBN).isGreaterThan(minimumAmountBN)) {
+    return '0.00'; 
+  } else {
+    return minimumAmountBN.plus(estimatedAmountBN).minus(stockAmountBN).toFixed(2);
+  }
+}
+
+function convertMinimumAmountToMeasure(material) {
+  const stockMinimumUnit = material.minimum.minimum_amount_unit;
+  // 最低ストックが登録されていない（＝最低ストックの単位が未登録）の場合は0を返す
+  if (!stockMinimumUnit) return convertBigNumber(0);
+
+  if (material.measure.measure_unit === stockMinimumUnit) {
+    return convertBigNumber(material.minimum.minimum_amount);
+  } else if (material.order.order_unit === stockMinimumUnit) {
+    return convertBigNumber(material.measure.measure_per_order)
+      .times(convertBigNumber(material.minimum.minimum_amount))
+      .dividedBy(convertBigNumber(material.order.amount_per_order));
+  } else if (material.count.count_unit === stockMinimumUnit) {
+    return convertBigNumber(material.measure.measure_per_order)
+      .times(convertBigNumber(material.minimum.minimum_amount))
+      .dividedBy(convertBigNumber(material.count.count_per_order));
+  }
+
+}
+
+async function putOrder(item) {
+  const params = {
+    TableName: orderTableName,
+    Item: item
+  };
+
+  try {
+    await docClient.put(params).promise();
+    console.log(`[SUCCESS] registered order: ${JSON.stringify(item)}`)
+  }
+  catch (error) {
+    throw error;
+  }
 }
 
 function getDayFromISO8601(date) {
